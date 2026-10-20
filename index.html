@@ -122,7 +122,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
 
   <section id="teacherView" hidden>
-    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabRoster" type="button" class="pick">Class lists</button></div>
+    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabRoster" type="button" class="pick">Manage class lists</button></div>
     <div id="tCodePane">
     <h2>Start code</h2>
     <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
@@ -133,7 +133,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Net wpm</td><td>Accuracy</td><td>Time typed</td><td>Saved</td></tr></thead><tbody id="tResults"><tr><td colspan="6" class="note">No results yet.</td></tr></tbody></table></div>
     </div>
     <div id="tRosterPane" hidden>
-      <h2>Class lists</h2>
+      <h2>Manage class lists</h2>
       <p id="rosterCurrent" class="status">Loading…</p>
       <p>Upload the school spreadsheet (.xlsx) or a CSV. It needs a sheet with the columns <b>Class</b>, <b>First name</b> and <b>Last name</b>, one student per row. If the workbook has a sheet called <b>All Students</b>, that sheet is used.</p>
       <p><label for="rosterFile">Spreadsheet: </label><input id="rosterFile" type="file" accept=".xlsx,.xls,.csv"></p>
@@ -933,7 +933,7 @@ $("rosterSave").addEventListener("click", async () => {
 });
 
 function renderTeacherClassList() {
-  if (!Object.keys(CLASSES).length) { $("tClassList").innerHTML = '<p class="note">No class lists loaded yet. Upload one in the Class lists tab.</p>'; return; }
+  if (!Object.keys(CLASSES).length) { $("tClassList").innerHTML = '<p class="note">No class lists loaded yet. Upload one in the Manage class lists tab.</p>'; return; }
   $("tClassList").innerHTML = classCards(CLASSES, tClass, "data-tclass");
 }
 $("tClassList").addEventListener("click", e => {
@@ -967,16 +967,16 @@ function renderClassDetail() {
     else { status = "Not done yet"; cls = "st-none"; row = "notyet"; }
     const latest = res[res.length - 1];
     const best = res.length ? Math.max(...res.map(r => r.netWpm)) : null;
-    return { name, status, cls, row, todayCount: today.length, total: res.length, latest, best };
+    const avg = res.length ? Math.round(res.reduce((a, r) => a + r.netWpm, 0) / res.length) : null;
+    return { name, status, cls, row, total: res.length, avg, best };
   });
   const counts = { now: rows.filter(r => r.row === "now").length, done: rows.filter(r => r.row === "done").length };
   $("tClassDetail").innerHTML =
     "<h2>Class " + tClass + "</h2>" +
     '<p>' + counts.now + " testing now \u00b7 " + counts.done + " done \u00b7 " + (rows.length - counts.now - counts.done) + " not done yet</p>" +
-    '<div style="overflow-x:auto"><table id="tClassTable"><thead><tr><td>Student</td><td>Status</td><td>Tests today</td><td>Tests in total</td><td>Latest wpm</td><td>Best wpm</td><td>Last test</td></tr></thead><tbody>' +
+    '<div style="overflow-x:auto"><table id="tClassTable"><thead><tr><td>Student</td><td>Status</td><td>Tests</td><td>Average wpm</td><td>Best wpm</td></tr></thead><tbody>' +
     rows.map(r => '<tr class="stu ' + r.row + (r.name === tStudent ? " sel" : "") + '" data-stu="' + escHtml(r.name) + '"><td>' + escHtml(r.name) + '</td><td class="' + r.cls + '">' + r.status +
-      "</td><td>" + r.todayCount + "</td><td>" + r.total + "</td><td>" + (r.latest ? r.latest.netWpm : "\u2013") + "</td><td>" + (r.best !== null ? r.best : "\u2013") +
-      "</td><td>" + (r.latest ? shortDate(toMs(r.latest.finishedAt)) : "\u2013") + "</td></tr>").join("") +
+      "</td><td>" + r.total + "</td><td>" + (r.avg !== null ? r.avg : "\u2013") + "</td><td>" + (r.best !== null ? r.best : "\u2013") + "</td></tr>").join("") +
     "</tbody></table></div><p class=\"note\">Click a student to see all their tests. \u201cDone\u201d means at least one saved test. \u201cTesting now\u201d means they started or finished a test in the last 15 minutes.</p>";
 }
 $("tClassDetail").addEventListener("click", e => {
