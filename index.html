@@ -76,6 +76,8 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .status { font-size:18px; font-weight:bold; }
 .status.none { color:var(--bad); }
 .status.loaded { color:var(--ok); }
+.proof { margin:8px 0 16px; }
+.proof button { font-size:22px; padding:14px 24px; font-weight:bold; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -213,6 +215,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <div class="big"><span id="rNet">0</span> words per minute</div>
     <p id="rSave" class="note"></p>
     <div id="chartWrap"><div id="chart"></div></div>
+    <div id="proof" class="proof"></div>
     <table><tbody id="rTable"></tbody></table>
   </section>
   </div>
@@ -528,10 +531,85 @@ function showResults() {
   $("testView").hidden = true;
   $("resultView").hidden = false;
   renderChart(); // after the results are visible, so it can scroll to the newest bar
+  renderProof();
   showStats(history.length - 1);
   $("restart").textContent = "Do another test";
   if (document.activeElement) document.activeElement.blur();
   updateAway();
+}
+
+// ---- Results picture for Toddle: unlocked after 3 full tests this lesson ----
+const PROOF_TESTS = 3;
+const fullTests = () => history.filter(r => !r.stoppedEarly);
+function renderProof() {
+  const n = fullTests().length;
+  $("proof").innerHTML = n >= PROOF_TESTS
+    ? '<button id="proofBtn" type="button">Save my results picture</button> <span id="proofMsg" class="note"></span>'
+    : '<p class="note">' + n + " of " + PROOF_TESTS + " full tests done. Do " + (PROOF_TESTS - n) + " more to save your results picture.</p>";
+  const b = $("proofBtn");
+  if (b) {
+    b.addEventListener("click", e => { if (e.detail === 0) return; saveProofPicture(); });
+    b.addEventListener("keydown", e => e.preventDefault());
+  }
+}
+
+function saveProofPicture() {
+  const tests = fullTests();
+  const W = 1200, H = 800, c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const font = (size, bold) => (bold ? "bold " : "") + size + "px -apple-system, system-ui, Segoe UI, Arial, sans-serif";
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H);
+  g.fillStyle = "#1f5fbf"; g.fillRect(0, 0, W, 12);
+
+  // Heading: who, which class, when
+  g.fillStyle = "#555555"; g.font = font(26, true); g.fillText("TYPING TEST RESULTS", 60, 70);
+  g.fillStyle = "#1b1b1b"; g.font = font(54, true); g.fillText(student.name, 60, 135);
+  g.font = font(30); g.fillStyle = "#333333";
+  const exported = new Date().toLocaleString(undefined, { weekday:"short", day:"numeric", month:"long", year:"numeric", hour:"numeric", minute:"2-digit" });
+  g.fillText("Class " + student.cls + "   \u00b7   Exported " + exported, 60, 182);
+
+  // Summary: average, best, number of tests
+  const avg = Math.round(tests.reduce((a, r) => a + r.netWpm, 0) / tests.length);
+  const best = Math.max(...tests.map(r => r.netWpm));
+  [["Average", avg + " wpm"], ["Best", best + " wpm"], ["Tests", String(tests.length)]].forEach(([label, val], i) => {
+    const x = 60 + i * 280;
+    g.fillStyle = "#eef3fb"; g.fillRect(x, 215, 250, 110);
+    g.fillStyle = "#555555"; g.font = font(24); g.fillText(label, x + 20, 252);
+    g.fillStyle = "#1b1b1b"; g.font = font(44, true); g.fillText(val, x + 20, 305);
+  });
+
+  // Bar chart: one bar per full test, words per minute on top
+  const left = 60, right = W - 60, top = 380, bottom = H - 80;
+  const max = Math.max(1, ...tests.map(r => r.netWpm));
+  const n = tests.length, gap = 16;
+  const bw = Math.min(110, (right - left - gap * (n - 1)) / n);
+  const total = bw * n + gap * (n - 1), x0 = left + (right - left - total) / 2;
+  g.strokeStyle = "#999999"; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(left, bottom); g.lineTo(right, bottom); g.stroke();
+  tests.forEach((r, i) => {
+    const x = x0 + i * (bw + gap);
+    const bh = Math.max(3, (r.netWpm / max) * (bottom - top - 50));
+    g.fillStyle = "#2a78d6"; g.fillRect(x, bottom - bh, bw, bh);
+    g.fillStyle = "#1b1b1b"; g.textAlign = "center";
+    g.font = font(bw < 50 ? 18 : 26, true); g.fillText(String(r.netWpm), x + bw / 2, bottom - bh - 12);
+    g.fillStyle = "#555555"; g.font = font(bw < 50 ? 14 : 20); g.fillText((bw < 50 ? "" : "Test ") + (i + 1), x + bw / 2, bottom + 30);
+    g.textAlign = "left";
+  });
+  g.fillStyle = "#777777"; g.font = font(18); g.fillText("Words per minute (net) for each full test this lesson", left, H - 20);
+
+  const safe = t => String(t).replace(/[\\/:*?"<>|]/g, "").trim();
+  const day = new Date().toISOString().slice(0, 10);
+  const filename = "Typing test - " + safe(student.cls) + " - " + safe(student.name) + " - " + day + ".png";
+  c.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const m = $("proofMsg");
+    if (m) m.textContent = "Saved to Downloads: " + filename;
+  }, "image/png");
 }
 
 // Bar chart of net wpm for every finished test this session. Restarted (thrown away) tests are not included.
