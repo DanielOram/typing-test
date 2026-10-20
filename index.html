@@ -73,6 +73,7 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .card .cname { display:block; font-size:24px; font-weight:bold; }
 .card .ccount { display:block; font-size:14px; color:var(--muted); }
 .card.picked { border-color:var(--cur); outline:2px solid var(--cur); }
+.savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
 #tClassTable tr.notyet td:first-child { border-left:6px solid var(--line); }
@@ -133,8 +134,12 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
       <p id="rosterCurrent" class="note">Loading…</p>
       <p>Upload the school spreadsheet (.xlsx) or a CSV. It needs a sheet with the columns <b>Class</b>, <b>First name</b> and <b>Last name</b>, one student per row. If the workbook has a sheet called <b>All Students</b>, that sheet is used.</p>
       <p><label for="rosterFile">Spreadsheet: </label><input id="rosterFile" type="file" accept=".xlsx,.xls,.csv"></p>
+      <div id="rosterSaveBar" class="savebar" hidden>
+        <p><b>Not saved yet.</b> This is a preview of the spreadsheet. Students won't see these lists until you save them.</p>
+        <p><button id="rosterSave" type="button">Save these class lists</button> <button id="rosterDiscard" type="button">Cancel</button></p>
+      </div>
+      <p id="rosterMsg" class="note"></p>
       <div id="rosterPreview"></div>
-      <p><button id="rosterSave" type="button" hidden>Replace class lists</button> <span id="rosterMsg" class="note"></span></p>
     </div>
     <div id="tClassPane" hidden>
       <h2>Choose a class</h2>
@@ -826,7 +831,7 @@ function renderRosterPreview() {
     classCards(pendingRoster, previewClass, "data-pclass") +
     (previewClass ? "<h3>" + escHtml(previewClass) + "</h3><ol class=\"namelist\">" + pendingRoster[previewClass].map(n => "<li>" + escHtml(n) + "</li>").join("") + "</ol>" : "") +
     (previewWarnings.length ? '<p class="err">Please check:</p><ul>' + previewWarnings.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "") +
-    "<p class=\"note\">Replacing the class lists does not delete any saved results.</p>";
+    "<p class=\"note\">Saving replaces the class lists that are loaded now. It does not delete any saved results.</p>";
 }
 $("rosterPreview").addEventListener("click", e => {
   const b = e.target.closest("[data-pclass]");
@@ -878,7 +883,7 @@ function parseRoster(wb) {
 $("rosterFile").addEventListener("change", async () => {
   const f = $("rosterFile").files[0];
   pendingRoster = null;
-  $("rosterSave").hidden = true;
+  $("rosterSaveBar").hidden = true;
   $("rosterMsg").textContent = "";
   if (!f) { $("rosterPreview").innerHTML = ""; return; }
   $("rosterPreview").innerHTML = '<p class="note">Reading ' + escHtml(f.name) + "\u2026</p>";
@@ -890,13 +895,20 @@ $("rosterFile").addEventListener("change", async () => {
     previewWarnings = r.warnings;
     previewClass = null;
     renderRosterPreview();
-    $("rosterSave").hidden = false;
+    $("rosterSaveBar").hidden = false;
   } catch (e) {
     console.error(e);
     $("rosterPreview").innerHTML = '<p class="err">' + escHtml(e.message || "Couldn't read that file.") + "</p>";
   }
 });
 
+$("rosterDiscard").addEventListener("click", () => {
+  pendingRoster = null;
+  $("rosterSaveBar").hidden = true;
+  $("rosterPreview").innerHTML = "";
+  $("rosterFile").value = "";
+  $("rosterMsg").textContent = "";
+});
 $("rosterSave").addEventListener("click", async () => {
   if (!pendingRoster) return;
   $("rosterMsg").textContent = "Saving\u2026";
@@ -904,10 +916,10 @@ $("rosterSave").addEventListener("click", async () => {
     await window.fb.saveRoster(pendingRoster);
     await loadRoster();
     pendingRoster = null;
-    $("rosterSave").hidden = true;
+    $("rosterSaveBar").hidden = true;
     $("rosterPreview").innerHTML = "";
     $("rosterFile").value = "";
-    $("rosterMsg").textContent = "Class lists replaced. Students will see them next time the code is entered (or after Refresh).";
+    $("rosterMsg").textContent = "Saved. Students will see the new class lists after the code is entered, or after they click Refresh.";
     renderRosterCurrent();
   } catch (e) {
     console.error(e);
