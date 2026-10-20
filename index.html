@@ -85,6 +85,7 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 /* "Do another test" on the results screen: big and green so it's easy to spot */
 #restart.again { background:#1a7f37; color:#ffffff; border:none; border-radius:8px; font-size:24px; font-weight:bold; padding:14px 28px; }
 #restart.again:hover { background:#156a2d; }
+.newtag { display:inline-block; font-size:12px; font-weight:bold; color:#ffffff; background:var(--warn); border-radius:4px; padding:1px 6px; margin-left:6px; vertical-align:middle; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -132,7 +133,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
 
   <section id="teacherView" hidden>
-    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabRoster" type="button" class="pick">Manage class lists</button><button id="tDemo" type="button" class="pick">Demo</button></div>
+    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabNew" type="button" class="pick">New students</button><button id="tabRoster" type="button" class="pick">Manage class lists</button><button id="tDemo" type="button" class="pick">Demo</button></div>
     <div id="tCodePane">
     <h2>Start code</h2>
     <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
@@ -141,6 +142,11 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <p class="note">A new code stops the old one working straight away, on every laptop.</p>
     <h2>Latest results</h2>
     <div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Net wpm</td><td>Accuracy</td><td>Time typed</td><td>Saved</td></tr></thead><tbody id="tResults"><tr><td colspan="6" class="note">No results yet.</td></tr></tbody></table></div>
+    </div>
+    <div id="tNewPane" hidden>
+      <h2>New students</h2>
+      <p>Students you've added yourself, on top of the uploaded class lists. Removing one takes them off the class list; their saved results stay.</p>
+      <div id="tNewList"></div>
     </div>
     <div id="tRosterPane" hidden>
       <h2>Manage class lists</h2>
@@ -171,6 +177,16 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
       <h2>Choose a class</h2>
       <div id="tClassList"></div>
       <div id="tClassDetail"></div>
+      <div id="tAddStudent" hidden>
+        <p><button id="addOpen" type="button">+ Add a student to this class</button></p>
+        <div id="addForm" class="savebar" hidden>
+          <p><b id="addTitle"></b></p>
+          <p><label for="addFirst">First name: </label><input id="addFirst" type="text" autocomplete="off">
+             <label for="addLast">Last name: </label><input id="addLast" type="text" autocomplete="off"></p>
+          <p><button id="addGo" type="button">Add student</button> <button id="addCancel" type="button">Cancel</button></p>
+        </div>
+        <p id="addMsg" class="status"></p>
+      </div>
       <div id="tStudentDetail"></div>
     </div>
     <p><button class="home" type="button">Sign out</button></p>
@@ -712,11 +728,22 @@ function showStudentPicker() {
 }
 
 // Fetch the class lists. Only works on a laptop where the teacher's code has been entered.
+// The uploaded lists, plus any students the teacher added by hand (kept separately so a new upload keeps them).
+let ADDED = [];            // [{ cls, name, addedAt }]
 async function loadRoster() {
   const r = await window.fb.getRoster();
-  CLASSES = (r && r.classes) || {};
+  const base = (r && r.classes) || {};
+  CLASSES = {};
+  Object.keys(base).forEach(c => { CLASSES[c] = base[c].slice(); });
+  ADDED = (r && r.added) || [];
+  ADDED.forEach(a => {
+    const list = CLASSES[a.cls] = CLASSES[a.cls] || [];
+    if (!list.some(n => n.toLowerCase() === a.name.toLowerCase())) list.push(a.name);
+  });
+  Object.values(CLASSES).forEach(l => l.sort((a, b) => a.localeCompare(b)));
   rosterInfo = r;
 }
+const isAdded = (cls, name) => ADDED.some(a => a.cls === cls && a.name === name);
 
 $("refreshRoster").addEventListener("click", async () => {
   $("refreshMsg").textContent = "Checking\u2026";
@@ -926,6 +953,9 @@ function showTab(which) {
   $("tCodePane").hidden = which !== "code";
   $("tClassPane").hidden = which !== "classes";
   $("tRosterPane").hidden = which !== "roster";
+  $("tNewPane").hidden = which !== "new";
+  $("tabNew").classList.toggle("picked", which === "new");
+  if (which === "new") renderNewStudents();
   $("tabCode").classList.toggle("picked", which === "code");
   $("tabClasses").classList.toggle("picked", which === "classes");
   $("tabRoster").classList.toggle("picked", which === "roster");
@@ -935,6 +965,61 @@ function showTab(which) {
 $("tabCode").addEventListener("click", () => showTab("code"));
 $("tabClasses").addEventListener("click", () => showTab("classes"));
 $("tabRoster").addEventListener("click", () => showTab("roster"));
+$("tabNew").addEventListener("click", () => showTab("new"));
+
+// ---- Teacher console: adding students by hand ----
+function resetAddForm() {
+  $("addForm").hidden = true;
+  $("addFirst").value = ""; $("addLast").value = "";
+}
+$("addOpen").addEventListener("click", () => {
+  $("addTitle").textContent = "Add a new student to class " + tClass;
+  $("addMsg").textContent = "";
+  $("addForm").hidden = false;
+  $("addFirst").focus();
+});
+$("addCancel").addEventListener("click", resetAddForm);
+async function addStudent() {
+  const name = tidy(tidy($("addFirst").value) + " " + tidy($("addLast").value));
+  const msg = (cls, t) => { $("addMsg").className = "status " + cls; $("addMsg").textContent = t; };
+  if (!tidy($("addFirst").value)) return msg("none", "Type the student's first name.");
+  if ((CLASSES[tClass] || []).some(n => n.toLowerCase() === name.toLowerCase())) return msg("none", name + " is already in " + tClass + ".");
+  msg("", "Adding\u2026");
+  try {
+    await window.fb.addStudent({ cls: tClass, name, addedAt: new Date().toISOString() });
+    await loadRoster();
+    resetAddForm();
+    msg("loaded", "\u2713 " + name + " added to " + tClass + ". They can choose their name now (students may need to click Refresh).");
+    renderClassDetail();
+  } catch (e) {
+    console.error(e);
+    msg("none", "Couldn't add the student. Check the internet, then try again.");
+  }
+}
+$("addGo").addEventListener("click", addStudent);
+$("addLast").addEventListener("keydown", e => { if (e.key === "Enter") addStudent(); });
+
+// ---- Teacher console: New students tab ----
+let removeArmed = null; // a Remove button needs two clicks
+function renderNewStudents() {
+  if (!ADDED.length) { $("tNewList").innerHTML = '<p class="note">No students added yet. Add one from the Classes tab: open a class, then click \u201cAdd a student to this class\u201d.</p>'; return; }
+  const list = ADDED.slice().sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
+  $("tNewList").innerHTML = '<div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Added</td><td></td></tr></thead><tbody>' +
+    list.map(a => "<tr><td>" + escHtml(a.name) + "</td><td>" + escHtml(a.cls) + "</td><td>" + shortDate(Date.parse(a.addedAt)) +
+      '</td><td><button type="button" data-remove="' + escHtml(a.addedAt) + '">' + (removeArmed === a.addedAt ? "Click again to remove" : "Remove") + "</button></td></tr>").join("") +
+    "</tbody></table></div>";
+}
+$("tNewList").addEventListener("click", async e => {
+  const b = e.target.closest("[data-remove]");
+  if (!b) return;
+  const key = b.dataset.remove;
+  if (removeArmed !== key) { removeArmed = key; renderNewStudents(); return; }
+  removeArmed = null;
+  const entry = ADDED.find(a => a.addedAt === key);
+  try { await window.fb.removeAdded(entry); await loadRoster(); }
+  catch (err) { console.error(err); }
+  renderNewStudents();
+});
 
 // ---- Teacher console: clear test data ----
 let wipeMode = null;
@@ -1096,6 +1181,9 @@ $("tClassList").addEventListener("click", e => {
   if (!b) return;
   tClass = b.dataset.tclass;
   tStudent = null;
+  resetAddForm();
+  $("addMsg").textContent = "";
+  $("tAddStudent").hidden = false;
   renderTeacherClassList();
   if (stopClassWatch) stopClassWatch();
   $("tClassDetail").innerHTML = '<p class="note">Loading ' + tClass + "\u2026</p>";
@@ -1130,7 +1218,7 @@ function renderClassDetail() {
     "<h2>Class " + tClass + "</h2>" +
     '<p>' + counts.now + " testing now \u00b7 " + counts.done + " done \u00b7 " + (rows.length - counts.now - counts.done) + " not done yet</p>" +
     '<div style="overflow-x:auto"><table id="tClassTable"><thead><tr><td>Student</td><td>Status</td><td>Tests</td><td>Average wpm</td><td>Best wpm</td></tr></thead><tbody>' +
-    rows.map(r => '<tr class="stu ' + r.row + (r.name === tStudent ? " sel" : "") + '" data-stu="' + escHtml(r.name) + '"><td>' + escHtml(r.name) + '</td><td class="' + r.cls + '">' + r.status +
+    rows.map(r => '<tr class="stu ' + r.row + (r.name === tStudent ? " sel" : "") + '" data-stu="' + escHtml(r.name) + '"><td>' + escHtml(r.name) + (isAdded(tClass, r.name) ? '<span class="newtag">New</span>' : "") + '</td><td class="' + r.cls + '">' + r.status +
       "</td><td>" + r.total + "</td><td>" + (r.avg !== null ? r.avg : "\u2013") + "</td><td>" + (r.best !== null ? r.best : "\u2013") + "</td></tr>").join("") +
     "</tbody></table></div><p class=\"note\">Click a student to see all their tests. \u201cDone\u201d means at least one saved test. \u201cTesting now\u201d means they started or finished a test in the last 15 minutes.</p>";
 }
@@ -1251,6 +1339,7 @@ document.querySelectorAll(".home").forEach(b => b.addEventListener("click", asyn
   if (classTicker) { clearInterval(classTicker); classTicker = null; }
   tClass = null; tStudent = null;
   $("tClassDetail").innerHTML = ""; $("tStudentDetail").innerHTML = "";
+  $("tAddStudent").hidden = true;
   lastCode = null; hideCode();
   $("tCodeMsg").textContent = "";
   if (wasTeacherView && window.fb) await window.fb.teacherSignOut();
@@ -1262,7 +1351,7 @@ document.querySelectorAll(".home").forEach(b => b.addEventListener("click", asyn
 // Firebase connection. The settings below are meant to be public; the Firestore rules protect the data.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, getDocs, writeBatch, setDoc, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, getDocs, writeBatch, setDoc, updateDoc, arrayUnion, arrayRemove, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8dYmDCBJN1nvaEKn8PUDb1_j3KShk3EM",
@@ -1319,9 +1408,16 @@ window.fb = {
     const s = await withTimeout(getDoc(doc(db, "config", "roster")));
     return s.exists() ? s.data() : null;
   },
+  // Replaces the uploaded lists. Students added by hand (the "added" field) are kept.
   async saveRoster(classes) {
     const count = Object.values(classes).reduce((a, l) => a + l.length, 0);
-    await withTimeout(setDoc(doc(db, "config", "roster"), { classes, count, updatedAt: serverTimestamp() }));
+    await withTimeout(setDoc(doc(db, "config", "roster"), { classes, count, updatedAt: serverTimestamp() }, { mergeFields: ["classes", "count", "updatedAt"] }));
+  },
+  async addStudent(entry) {
+    await withTimeout(setDoc(doc(db, "config", "roster"), { added: arrayUnion(entry) }, { merge: true }));
+  },
+  async removeAdded(entry) {
+    await withTimeout(updateDoc(doc(db, "config", "roster"), { added: arrayRemove(entry) }));
   },
   // Succeeds only if the code matches the teacher's current code (checked by the Firestore rules).
   async startSession(code, studentName, className) {
