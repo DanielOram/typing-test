@@ -559,14 +559,15 @@ function showResults() {
 
 // ---- Results picture for Toddle: unlocked after 3 full tests this lesson ----
 const PROOF_TESTS = 3;
-// Only tests that ran their full length count. In the teacher's demo every test counts, so it's quick to show.
-const fullTests = () => demo ? history.slice() : history.filter(r => !r.stoppedEarly);
+// A test counts towards the results picture if it lasted at least 30 seconds (finished or stopped).
+const MIN_SECONDS = 30;
+const fullTests = () => history.filter(r => r.seconds >= MIN_SECONDS);
 function renderProof() {
   const n = fullTests().length;
   $("proof").innerHTML = n >= PROOF_TESTS
     ? '<button id="proofBtn" type="button">Save my results picture</button> <span id="proofMsg" class="note"></span>'
-    : '<p class="progress">' + n + " of " + PROOF_TESTS + " full tests done. Do " + (PROOF_TESTS - n) + " more full test" + (PROOF_TESTS - n === 1 ? "" : "s") +
-      " to save your results picture." + (demo ? "" : " <span class=\"note\">(Tests ended with Stop don't count.)</span>") + "</p>";
+    : '<p class="progress">' + n + " of " + PROOF_TESTS + " tests done. Do " + (PROOF_TESTS - n) + " more test" + (PROOF_TESTS - n === 1 ? "" : "s") +
+      " to save your results picture. <span class=\"note\">(A test must be at least " + MIN_SECONDS + " seconds to count.)</span></p>";
   const b = $("proofBtn");
   if (b) {
     b.addEventListener("click", e => { if (e.detail === 0) return; saveProofPicture(); });
@@ -617,7 +618,7 @@ function saveProofPicture() {
     g.fillStyle = "#555555"; g.font = font(bw < 50 ? 14 : 20); g.fillText((bw < 50 ? "" : "Test ") + (i + 1), x + bw / 2, bottom + 30);
     g.textAlign = "left";
   });
-  g.fillStyle = "#777777"; g.font = font(18); g.fillText("Words per minute (net) for each full test this lesson", left, H - 20);
+  g.fillStyle = "#777777"; g.font = font(18); g.fillText("Words per minute (net) for each test this lesson of 30 seconds or more", left, H - 20);
 
   const safe = t => String(t).replace(/[\\/:*?"<>|]/g, "").trim();
   const t = new Date(), day = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"); // laptop's own date
