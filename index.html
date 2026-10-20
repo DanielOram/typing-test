@@ -158,7 +158,13 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     </div>
     <div id="tNewPane" hidden>
       <h2>New students</h2>
-      <p>Students you've added yourself, on top of the uploaded class lists. Removing one takes them off the class list; their saved results stay.</p>
+      <p>Students you've added yourself, on top of the uploaded class lists. Deleting one takes them off the class list; their saved results stay.</p>
+      <div id="newConfirm" class="savebar" hidden>
+        <p class="err" id="newConfirmWhat"></p>
+        <p><label for="newConfirmInput">Type DELETE to confirm: </label><input id="newConfirmInput" type="text" autocomplete="off">
+          <button id="newConfirmGo" type="button" class="redbtn">Delete</button> <button id="newConfirmCancel" type="button">Cancel</button></p>
+      </div>
+      <p id="newMsg" class="status"></p>
       <div id="tNewList"></div>
     </div>
     <div id="tRosterPane" hidden>
@@ -1078,24 +1084,36 @@ $("addGo").addEventListener("click", addStudent);
 $("addLast").addEventListener("keydown", e => { if (e.key === "Enter") addStudent(); });
 
 // ---- Teacher console: New students tab ----
-let removeArmed = null; // a Remove button needs two clicks
+let removeKey = null; // the added student waiting for "type DELETE"
 function renderNewStudents() {
   if (!ADDED.length) { $("tNewList").innerHTML = '<p class="note">No students added yet. Add one from the Classes tab: open a class, then click \u201cAdd a student to this class\u201d.</p>'; return; }
   const list = ADDED.slice().sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
   $("tNewList").innerHTML = '<div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Added</td><td></td></tr></thead><tbody>' +
     list.map(a => "<tr><td>" + escHtml(a.name) + "</td><td>" + escHtml(a.cls) + "</td><td>" + shortDate(Date.parse(a.addedAt)) +
-      '</td><td><button type="button" data-remove="' + escHtml(a.addedAt) + '">' + (removeArmed === a.addedAt ? "Click again to remove" : "Remove") + "</button></td></tr>").join("") +
+      '</td><td><button type="button" class="redbtn" data-remove="' + escHtml(a.addedAt) + '">Delete</button></td></tr>').join("") +
     "</tbody></table></div>";
 }
-$("tNewList").addEventListener("click", async e => {
+$("tNewList").addEventListener("click", e => {
   const b = e.target.closest("[data-remove]");
   if (!b) return;
-  const key = b.dataset.remove;
-  if (removeArmed !== key) { removeArmed = key; renderNewStudents(); return; }
-  removeArmed = null;
-  const entry = ADDED.find(a => a.addedAt === key);
-  try { await window.fb.removeAdded(entry); await loadRoster(); }
-  catch (err) { console.error(err); }
+  removeKey = b.dataset.remove;
+  const entry = ADDED.find(a => a.addedAt === removeKey);
+  $("newConfirmWhat").textContent = "This deletes " + entry.name + " from class " + entry.cls + ". Their saved results stay.";
+  $("newConfirmInput").value = "";
+  $("newMsg").textContent = "";
+  $("newConfirm").hidden = false;
+  $("newConfirmInput").focus();
+});
+$("newConfirmCancel").addEventListener("click", () => { $("newConfirm").hidden = true; removeKey = null; });
+$("newConfirmGo").addEventListener("click", async () => {
+  const msg = (cls, t) => { $("newMsg").className = "status " + cls; $("newMsg").textContent = t; };
+  if ($("newConfirmInput").value.trim() !== "DELETE") return msg("none", "Type DELETE in capitals to confirm.");
+  const entry = ADDED.find(a => a.addedAt === removeKey);
+  $("newConfirm").hidden = true;
+  removeKey = null;
+  if (!entry) return;
+  try { await window.fb.removeAdded(entry); await loadRoster(); msg("loaded", "\u2713 " + entry.name + " deleted from " + entry.cls + "."); }
+  catch (err) { console.error(err); msg("none", "Couldn't delete. Check the internet, then try again."); }
   renderNewStudents();
 });
 
