@@ -74,7 +74,11 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
 
   <section id="teacherLogin" hidden>
     <h2>Teacher sign in</h2>
-    <p><label for="tPass">Password: </label><input id="tPass" type="password" autocomplete="off"> <button id="tEnter" type="button">Enter</button></p>
+    <form id="tForm">
+      <p><label for="tEmail">Email: </label><input id="tEmail" name="email" type="email" autocomplete="username" required></p>
+      <p><label for="tPass">Password: </label><input id="tPass" name="password" type="password" autocomplete="current-password" required></p>
+      <p><button id="tEnter" type="submit">Sign in</button></p>
+    </form>
     <p id="tErr" class="err"></p>
     <p><button class="home" type="button">Back</button></p>
   </section>
@@ -83,7 +87,10 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <h2>Start code</h2>
     <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
     <div class="code" id="tCode">----</div>
-    <p class="note" id="tCodeNext"></p>
+    <p><button id="newCode" type="button">Generate new code</button> <span id="tCodeMsg" class="note"></span></p>
+    <p class="note">A new code stops the old one working straight away, on every laptop.</p>
+    <h2>Latest results</h2>
+    <div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Net wpm</td><td>Accuracy</td><td>Time typed</td><td>Saved</td></tr></thead><tbody id="tResults"><tr><td colspan="6" class="note">No results yet.</td></tr></tbody></table></div>
     <p><button class="home" type="button">Sign out</button></p>
   </section>
 
@@ -131,6 +138,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   <section id="resultView" hidden>
     <h2 id="rTitle">Your result</h2>
     <div class="big"><span id="rNet">0</span> words per minute</div>
+    <p id="rSave" class="note"></p>
     <div id="chartWrap"><div id="chart"></div></div>
     <table><tbody id="rTable"></tbody></table>
   </section>
@@ -391,11 +399,42 @@ function endTest(stoppedEarly) {
   history.push(r);
   allResults.push(r);
   showResults();
+  saveResult(r);
 }
+
+// Save to Firebase. The status shows under the big number; a failed save can be retried.
+const saveState = new Map(); // result -> "saving" | "saved" | "failed"
+function showSaveState(r) {
+  const st = saveState.get(r);
+  const el = $("rSave");
+  if (st === "saving") el.innerHTML = "Saving your result…";
+  else if (st === "saved") el.innerHTML = "Saved.";
+  else if (st === "failed") el.innerHTML = '<span class="err">Not saved. Check the internet, then </span><button type="button" id="retrySave">Try again</button>';
+  else el.textContent = "";
+  const b = $("retrySave");
+  if (b) b.addEventListener("click", () => saveResult(r));
+}
+async function saveResult(r) {
+  saveState.set(r, "saving");
+  if (history[selectedIndex] === r) showSaveState(r);
+  try {
+    if (!window.fb) throw new Error("Firebase not loaded");
+    await window.fb.saveResult(r, sessionId);
+    saveState.set(r, "saved");
+  } catch (e) {
+    console.error("Save failed", e);
+    saveState.set(r, "failed");
+  }
+  if (history[selectedIndex] === r) showSaveState(r);
+}
+let selectedIndex = -1;
+let sessionId = null; // set when the teacher's code is accepted
 
 // Fill the stats with one test's numbers and highlight its bar.
 function showStats(i) {
   const r = history[i];
+  selectedIndex = i;
+  showSaveState(r);
   $("rTitle").textContent = "Test " + (i + 1) + " result";
   $("rNet").textContent = r.netWpm;
   const rows = [
@@ -516,10 +555,26 @@ $("go").addEventListener("click", () => {
   $("cInput").focus();
 });
 
+// The server checks the code (students' laptops can never read it). If it's right, a session is created.
+let checking = false;
 async function checkStudentCode() {
+  if (checking) return;
   const v = $("cInput").value.trim();
-  if (await codeIsValid(v)) enterTest();
-  else { $("cErr").textContent = "That code is not right. Ask your teacher."; $("cInput").value = ""; $("cInput").focus(); }
+  const fail = msg => { $("cErr").textContent = msg; $("cInput").value = ""; $("cInput").focus(); };
+  if (!/^\d{4}$/.test(v)) return fail("The code is 4 numbers. Ask your teacher.");
+  if (!window.fb) return fail("Can't connect. Check the internet, then try again.");
+  checking = true;
+  $("cErr").textContent = "Checking…";
+  try {
+    sessionId = await window.fb.startSession(v, pickedName, pickedClass);
+    $("cErr").textContent = "";
+    enterTest();
+  } catch (e) {
+    console.error(e);
+    fail(e.code === "permission-denied" ? "That code is not right. Ask your teacher." : "Can't connect. Check the internet, then try again.");
+  } finally {
+    checking = false;
+  }
 }
 $("cEnter").addEventListener("click", checkStudentCode);
 $("cInput").addEventListener("keydown", e => { if (e.key === "Enter") checkStudentCode(); });
@@ -549,69 +604,135 @@ $("change").addEventListener("click", e => {
 });
 $("change").addEventListener("keydown", e => e.preventDefault());
 
-// ---- Home, teacher sign in, start codes ----
-// NOTE: this keeps students out, not determined hackers: the check runs in the page itself.
-const PASS_HASH = "973d56f395a10bb3728d97b01dee65cfc9d7323bf90e3b31066b09294760b86c"; // SHA-256 of the teacher password
-const CODE_SECRET = "1ce80cf0b73da87ac84dc7e546c047d4";
-const CODE_WINDOW_MS = 10 * 60 * 1000; // code changes every 10 minutes
+// ---- Home, teacher sign in, start codes (Firebase does the checking) ----
 const VIEWS = ["homeView", "teacherLogin", "teacherView", "startView", "codeView", "appView"];
-let teacherTimer = null;
+let stopCodeWatch = null, stopResultsWatch = null;
 
 function showView(id) {
   VIEWS.forEach(v => { $(v).hidden = v !== id; });
   updateAway();
 }
 
-async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-// Same 4-digit code on every laptop for the same 10-minute window, worked out from the clock.
-async function codeFor(win) {
-  const h = await sha256Hex(CODE_SECRET + ":" + win);
-  return String(parseInt(h.slice(0, 8), 16) % 10000).padStart(4, "0");
-}
-// Accept this window's code plus the one before and after, so a code doesn't die mid-walk or on a slightly-off clock.
-async function codeIsValid(v) {
-  if (!/^\d{4}$/.test(v)) return false;
-  const win = Math.floor(Date.now() / CODE_WINDOW_MS);
-  for (const w of [win - 1, win, win + 1]) if (v === await codeFor(w)) return true;
-  return false;
+function escHtml(t) { return String(t).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]); }
+
+function openTeacherView() {
+  showView("teacherView");
+  stopCodeWatch = window.fb.watchCode(code => {
+    $("tCode").textContent = code || "----";
+    if (!code) $("tCodeMsg").textContent = "No code yet. Click Generate new code.";
+  });
+  stopResultsWatch = window.fb.watchResults(rows => {
+    $("tResults").innerHTML = rows.length ? rows.map(r =>
+      "<tr><td>" + escHtml(r.studentName) + "</td><td>" + escHtml(r.className) + "</td><td>" + r.netWpm +
+      "</td><td>" + r.accuracy + "%</td><td>" + fmtLong(r.seconds) + "</td><td>" +
+      (r.savedAt ? r.savedAt.toDate().toLocaleString() : "just now") + "</td></tr>").join("")
+      : '<tr><td colspan="6" class="note">No results yet.</td></tr>';
+  });
 }
 
-async function updateTeacherCode() {
-  const now = Date.now(), win = Math.floor(now / CODE_WINDOW_MS);
-  $("tCode").textContent = await codeFor(win);
-  const left = Math.ceil(((win + 1) * CODE_WINDOW_MS - now) / 1000);
-  $("tCodeNext").textContent = "New code in " + fmt(left) + ". The old code still works for 10 more minutes after that.";
-}
-
-async function checkTeacherPass() {
-  if (await sha256Hex($("tPass").value) === PASS_HASH) {
+$("tForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!window.fb) { $("tErr").textContent = "Can't connect. Check the internet, then try again."; return; }
+  $("tErr").textContent = "Signing in\u2026";
+  try {
+    await window.fb.teacherSignIn($("tEmail").value.trim(), $("tPass").value);
+    $("tErr").textContent = "";
     $("tPass").value = "";
-    showView("teacherView");
-    updateTeacherCode();
-    teacherTimer = setInterval(updateTeacherCode, 1000);
-  } else {
-    $("tErr").textContent = "Wrong password.";
+    openTeacherView();
+  } catch (err) {
+    console.error(err);
+    $("tErr").textContent = err.code === "auth/network-request-failed" ? "Can't connect. Check the internet, then try again." : "Wrong email or password.";
     $("tPass").value = "";
     $("tPass").focus();
   }
-}
+});
 
-$("asTeacher").addEventListener("click", () => { $("tErr").textContent = ""; showView("teacherLogin"); $("tPass").focus(); });
+$("newCode").addEventListener("click", async () => {
+  $("tCodeMsg").textContent = "Making a new code\u2026";
+  try { await window.fb.newCode(); $("tCodeMsg").textContent = "New code ready. The old one no longer works."; }
+  catch (err) { console.error(err); $("tCodeMsg").textContent = "Couldn't make a new code. Check the internet, then try again."; }
+});
+
+$("asTeacher").addEventListener("click", () => {
+  $("tErr").textContent = "";
+  if (window.fb && window.fb.isTeacher()) openTeacherView(); // already signed in
+  else { showView("teacherLogin"); $("tEmail").focus(); }
+});
 $("asStudent").addEventListener("click", () => { renderClassList(); renderNameList(); showView("startView"); });
-$("tEnter").addEventListener("click", checkTeacherPass);
-$("tPass").addEventListener("keydown", e => { if (e.key === "Enter") checkTeacherPass(); });
 
-// Back / Sign out: return to the teacher-or-student question.
-document.querySelectorAll(".home").forEach(b => b.addEventListener("click", () => {
-  if (teacherTimer) { clearInterval(teacherTimer); teacherTimer = null; }
+// Back / Sign out: return to the teacher-or-student question. Leaving the teacher screen signs the teacher out.
+document.querySelectorAll(".home").forEach(b => b.addEventListener("click", async () => {
+  const wasTeacherView = !$("teacherView").hidden;
+  if (stopCodeWatch) { stopCodeWatch(); stopCodeWatch = null; }
+  if (stopResultsWatch) { stopResultsWatch(); stopResultsWatch = null; }
   $("tCode").textContent = "----";
+  $("tCodeMsg").textContent = "";
+  if (wasTeacherView && window.fb) await window.fb.teacherSignOut();
   showView("homeView");
 }));
 
 renderClassList();
+</script>
+<script type="module">
+// Firebase connection. The settings below are meant to be public; the Firestore rules protect the data.
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, setDoc, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC8dYmDCBJN1nvaEKn8PUDb1_j3KShk3EM",
+  authDomain: "typing-test-4e682.firebaseapp.com",
+  projectId: "typing-test-4e682",
+  storageBucket: "typing-test-4e682.firebasestorage.app",
+  messagingSenderId: "291960543676",
+  appId: "1:291960543676:web:2e2d01aba41a78fc4273b9"
+};
+const TEACHER_UID = "yyxiD75owvSIKHPWZixu7aOouMX2";
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Every laptop is silently signed in anonymously, so the rules can tell laptops apart.
+onAuthStateChanged(auth, u => { if (!u) signInAnonymously(auth).catch(e => console.error("Anonymous sign-in failed", e)); });
+function currentUser() {
+  if (auth.currentUser) return Promise.resolve(auth.currentUser);
+  return new Promise(res => { const stop = onAuthStateChanged(auth, u => { if (u) { stop(); res(u); } }); });
+}
+// Give up after 15 seconds instead of hanging forever without internet.
+function withTimeout(p) {
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error("timeout"), { code: "timeout" })), 15000))]);
+}
+
+window.fb = {
+  isTeacher: () => auth.currentUser?.uid === TEACHER_UID,
+  async teacherSignIn(email, password) {
+    const cred = await signInWithEmailAndPassword(auth, email, password);
+    if (cred.user.uid !== TEACHER_UID) { await signOut(auth); throw Object.assign(new Error("not teacher"), { code: "not-teacher" }); }
+  },
+  async teacherSignOut() { await signOut(auth); }, // then becomes anonymous again
+  watchCode(cb) {
+    return onSnapshot(doc(db, "config", "startCode"), s => cb(s.exists() ? s.data().code : null), e => { console.error(e); cb(null); });
+  },
+  async newCode() {
+    const a = new Uint32Array(1); crypto.getRandomValues(a);
+    await withTimeout(setDoc(doc(db, "config", "startCode"), { code: String(a[0] % 10000).padStart(4, "0"), updatedAt: serverTimestamp() }));
+  },
+  // Succeeds only if the code matches the teacher's current code (checked by the Firestore rules).
+  async startSession(code, studentName, className) {
+    const u = await currentUser();
+    const ref = await withTimeout(addDoc(collection(db, "sessions"), { uid: u.uid, code, studentName, className, startedAt: serverTimestamp() }));
+    return ref.id;
+  },
+  async saveResult(r, sessionId) {
+    const u = await currentUser();
+    await withTimeout(addDoc(collection(db, "results"), { ...r, uid: u.uid, sessionId, savedAt: serverTimestamp() }));
+  },
+  watchResults(cb) {
+    return onSnapshot(query(collection(db, "results"), orderBy("savedAt", "desc"), limit(20)),
+      s => cb(s.docs.map(d => d.data({ serverTimestamps: "estimate" }))), e => { console.error(e); cb([]); });
+  }
+};
 </script>
 </body>
 </html>
