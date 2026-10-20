@@ -466,7 +466,8 @@ function showStats(i) {
     ["Missed letters", r.missedChars],
     ["Mistakes fixed", r.correctedErrors],
     ["Mistakes not fixed", r.uncorrectedErrors],
-    ["Time typed", fmtLong(r.seconds)]
+    ["Time typed", fmtLong(r.seconds)],
+    ["Date and time", new Date(r.finishedAt).toLocaleString(undefined, { weekday:"short", day:"numeric", month:"short", year:"numeric", hour:"numeric", minute:"2-digit" })]
   ];
   $("rTable").innerHTML = rows.map(([a, b]) => "<tr><td>" + a + "</td><td>" + b + "</td></tr>").join("");
   document.querySelectorAll("#chart .col").forEach((c, j) => c.classList.toggle("selected", j === i));
@@ -479,7 +480,7 @@ function showResults() {
   $("resultView").hidden = false;
   renderChart(); // after the results are visible, so it can scroll to the newest bar
   showStats(history.length - 1);
-  $("restart").textContent = "Retake test";
+  $("restart").textContent = "Do another test";
   if (document.activeElement) document.activeElement.blur();
   updateAway();
 }
@@ -503,7 +504,7 @@ $("chart").addEventListener("click", e => {
   if (col) showStats(Number(col.dataset.i));
 });
 
-// One button: "Restart test" during a test (unfinished test is thrown away), "Retake test" on results.
+// One button: "Restart test" during a test (unfinished test is thrown away), "Do another test" on results.
 // Only a real mouse/trackpad click works; Space/Enter are ignored.
 $("restart").addEventListener("click", e => { if (e.detail === 0) return; newTest(); });
 $("restart").addEventListener("keydown", e => e.preventDefault());
