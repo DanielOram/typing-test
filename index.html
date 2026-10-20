@@ -55,6 +55,12 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 #nameList .pick { text-align:left; }
 .pick.picked { outline:4px solid var(--cur); font-weight:bold; }
 .note { color:var(--muted); }
+/* Database connection status, shown on every screen */
+.net { font-size:14px; margin:-8px 0 12px; display:flex; align-items:center; gap:6px; }
+.net .dot { width:10px; height:10px; border-radius:50%; background:var(--muted); display:inline-block; }
+.net.ok .dot { background:var(--ok); }
+.net.bad .dot { background:var(--bad); }
+.net.bad { color:var(--bad); font-weight:bold; }
 .err { color:var(--bad); font-weight:bold; min-height:1.2em; }
 .code { font-size:96px; font-weight:bold; letter-spacing:0.15em; font-variant-numeric:tabular-nums; margin:8px 0; }
 input { font-size:20px; padding:8px; }
@@ -66,6 +72,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
 
 <main>
   <h1>Typing Test</h1>
+  <p id="net" class="net connecting"><span class="dot"></span> <span id="netText">Connecting to the database…</span></p>
 
   <section id="homeView">
     <h2>Are you a teacher or a student?</h2>
@@ -604,6 +611,23 @@ $("change").addEventListener("click", e => {
 });
 $("change").addEventListener("keydown", e => e.preventDefault());
 
+// ---- Database connection status ----
+function setNet(state) {
+  const msg = {
+    connecting: "Connecting to the database\u2026",
+    ok: "Connected. Results will be saved.",
+    offline: "No internet. Results will NOT be saved.",
+    error: "Can't reach the database. Results will NOT be saved."
+  }[state];
+  $("net").className = "net " + (state === "ok" ? "ok" : state === "connecting" ? "connecting" : "bad");
+  $("netText").textContent = msg;
+}
+window.addEventListener("fbstatus", e => setNet(e.detail));
+window.addEventListener("offline", () => setNet("offline"));
+window.addEventListener("online", () => setNet(window.fb && window.fb.ready() ? "ok" : "connecting"));
+// If Firebase hasn't connected after 15 seconds (blocked by a school filter, say), say so.
+setTimeout(() => { if (!(window.fb && window.fb.ready())) setNet(navigator.onLine ? "error" : "offline"); }, 15000);
+
 // ---- Home, teacher sign in, start codes (Firebase does the checking) ----
 const VIEWS = ["homeView", "teacherLogin", "teacherView", "startView", "codeView", "appView"];
 let stopCodeWatch = null, stopResultsWatch = null;
@@ -694,7 +718,13 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // Every laptop is silently signed in anonymously, so the rules can tell laptops apart.
-onAuthStateChanged(auth, u => { if (!u) signInAnonymously(auth).catch(e => console.error("Anonymous sign-in failed", e)); });
+// Signing in needs Firebase's servers, so a successful sign-in also proves the connection works.
+let connected = false;
+const status = s => window.dispatchEvent(new CustomEvent("fbstatus", { detail: s }));
+onAuthStateChanged(auth, u => {
+  if (u) { connected = true; status(navigator.onLine ? "ok" : "offline"); }
+  else signInAnonymously(auth).catch(e => { console.error("Anonymous sign-in failed", e); status(navigator.onLine ? "error" : "offline"); });
+});
 function currentUser() {
   if (auth.currentUser) return Promise.resolve(auth.currentUser);
   return new Promise(res => { const stop = onAuthStateChanged(auth, u => { if (u) { stop(); res(u); } }); });
@@ -705,6 +735,7 @@ function withTimeout(p) {
 }
 
 window.fb = {
+  ready: () => connected,
   isTeacher: () => auth.currentUser?.uid === TEACHER_UID,
   async teacherSignIn(email, password) {
     const cred = await signInWithEmailAndPassword(auth, email, password);
