@@ -78,6 +78,7 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .status.none { color:var(--bad); }
 .status.loaded { color:var(--ok); }
 .proof { margin:8px 0 16px; }
+.progress { font-size:20px; font-weight:bold; }
 .proof button { font-size:22px; padding:14px 24px; font-weight:bold; }
 .danger { margin-top:40px; border-top:3px solid var(--bad); padding-top:8px; }
 .redbtn { background:var(--bad); color:#ffffff; border:none; border-radius:6px; font-weight:bold; }
@@ -558,12 +559,14 @@ function showResults() {
 
 // ---- Results picture for Toddle: unlocked after 3 full tests this lesson ----
 const PROOF_TESTS = 3;
-const fullTests = () => history.filter(r => !r.stoppedEarly);
+// Only tests that ran their full length count. In the teacher's demo every test counts, so it's quick to show.
+const fullTests = () => demo ? history.slice() : history.filter(r => !r.stoppedEarly);
 function renderProof() {
   const n = fullTests().length;
   $("proof").innerHTML = n >= PROOF_TESTS
     ? '<button id="proofBtn" type="button">Save my results picture</button> <span id="proofMsg" class="note"></span>'
-    : '<p class="note">' + n + " of " + PROOF_TESTS + " full tests done. Do " + (PROOF_TESTS - n) + " more to save your results picture.</p>";
+    : '<p class="progress">' + n + " of " + PROOF_TESTS + " full tests done. Do " + (PROOF_TESTS - n) + " more full test" + (PROOF_TESTS - n === 1 ? "" : "s") +
+      " to save your results picture." + (demo ? "" : " <span class=\"note\">(Tests ended with Stop don't count.)</span>") + "</p>";
   const b = $("proofBtn");
   if (b) {
     b.addEventListener("click", e => { if (e.detail === 0) return; saveProofPicture(); });
@@ -617,7 +620,7 @@ function saveProofPicture() {
   g.fillStyle = "#777777"; g.font = font(18); g.fillText("Words per minute (net) for each full test this lesson", left, H - 20);
 
   const safe = t => String(t).replace(/[\\/:*?"<>|]/g, "").trim();
-  const day = new Date().toISOString().slice(0, 10);
+  const t = new Date(), day = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"); // laptop's own date
   const filename = "Typing test - " + safe(student.cls) + " - " + safe(student.name) + " - " + day + ".png";
   c.toBlob(blob => {
     const url = URL.createObjectURL(blob);
