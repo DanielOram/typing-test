@@ -240,9 +240,9 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
   </div>
 
-  <details>
-    <summary>Raw data (teacher testing only)</summary>
-    <p>Every attempt this session, including every keystroke. This is what will be exported later.</p>
+  <details id="rawPanel" hidden>
+    <summary>Raw data (demo only)</summary>
+    <p>Everything recorded for each demo test, including every keystroke. Real students' tests save this to the database.</p>
     <button id="copyRaw" type="button">Copy raw data</button> <span id="copyMsg"></span>
     <pre id="raw">No attempts yet.</pre>
   </details>
@@ -550,7 +550,7 @@ function showStats(i) {
 
 // A test just finished: show it, with the newest bar selected.
 function showResults() {
-  $("raw").textContent = JSON.stringify(allResults, null, 2);
+  $("raw").textContent = demo ? JSON.stringify(history, null, 2) : "";
   $("testView").hidden = true;
   $("resultView").hidden = false;
   renderChart(); // after the results are visible, so it can scroll to the newest bar
@@ -905,6 +905,7 @@ function showView(id) {
   $("role").className = "role " + role;
   $("role").textContent = role === "teacher" ? "Teacher console" : role === "demo" ? "Student demo: not saved" : "Student";
   $("demoBar").hidden = !demo;
+  $("rawPanel").hidden = !demo;
   updateAway();
 }
 
