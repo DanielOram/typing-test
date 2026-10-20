@@ -124,6 +124,12 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
 
   <div id="appView" hidden>
   <p id="studentBar"><span id="who"></span> <button id="change" type="button">Change student</button></p>
+  <div id="changePanel" hidden>
+    <p><b>Ask your teacher to type the code to change student.</b></p>
+    <p><label for="chInput">Code: </label><input id="chInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off">
+      <button id="chOk" type="button">Change student</button> <button id="chCancel" type="button">Cancel</button></p>
+    <p id="chErr" class="err"></p>
+  </div>
   <button id="restart" type="button">Restart test</button>
 
   <section id="testView">
@@ -557,8 +563,19 @@ $("nameList").addEventListener("click", e => {
 });
 
 // Name chosen: go to the code screen. The teacher types the code to let them start.
-$("go").addEventListener("click", () => {
+// If the teacher has just typed the code to change student, use that code and skip the code screen.
+let approvedCode = null;
+$("go").addEventListener("click", async () => {
   if (!pickedClass || !pickedName) return;
+  if (approvedCode && window.fb) {
+    const code = approvedCode;
+    approvedCode = null;
+    try {
+      sessionId = await window.fb.startSession(code, pickedName, pickedClass);
+      enterTest();
+      return;
+    } catch (e) { console.error(e); } // e.g. a new code was generated meanwhile: fall back to the code screen
+  }
   $("cWho").textContent = pickedName + " · Class " + pickedClass;
   $("cInput").value = "";
   $("cErr").textContent = "";
@@ -601,9 +618,44 @@ function enterTest() {
   else newTest();
 }
 
-// Change student: abandon any test in progress (not saved) and go back to the start screen.
+// Change student: needs the teacher's code first, so a mis-click can't send a student off to pick someone else.
 $("change").addEventListener("click", e => {
   if (e.detail === 0) return;
+  $("chInput").value = "";
+  $("chErr").textContent = "";
+  $("changePanel").hidden = false;
+  $("chInput").focus();
+});
+$("chCancel").addEventListener("click", () => {
+  $("changePanel").hidden = true;
+  if (s && !s.ended) box.focus(); // straight back to typing
+});
+let changing = false;
+async function confirmChange() {
+  if (changing) return;
+  const v = $("chInput").value.trim();
+  const fail = msg => { $("chErr").textContent = msg; $("chInput").value = ""; $("chInput").focus(); };
+  if (!/^\d{4}$/.test(v)) return fail("The code is 4 numbers.");
+  if (!window.fb) return fail("Can't connect. Check the internet, then try again.");
+  changing = true;
+  $("chErr").textContent = "Checking\u2026";
+  try {
+    await window.fb.checkCode(v);
+    approvedCode = v;
+    $("changePanel").hidden = true;
+    leaveForStudentPicker();
+  } catch (err) {
+    console.error(err);
+    fail(err.code === "permission-denied" ? "That code is not right." : "Can't connect. Check the internet, then try again.");
+  } finally {
+    changing = false;
+  }
+}
+$("chOk").addEventListener("click", confirmChange);
+$("chInput").addEventListener("keydown", e => { if (e.key === "Enter") confirmChange(); });
+
+// Abandon any test in progress (not saved) and go back to the class and name screen.
+function leaveForStudentPicker() {
   if (s && s.timerId) clearInterval(s.timerId);
   s = null;
   // Keep their class AND name selected, so an accidental click costs one click to undo.
@@ -612,7 +664,7 @@ $("change").addEventListener("click", e => {
   $("appView").hidden = true;
   $("startView").hidden = false;
   updateAway();
-});
+}
 $("change").addEventListener("keydown", e => e.preventDefault());
 
 // ---- Database connection status ----
@@ -752,6 +804,11 @@ window.fb = {
   async newCode() {
     const a = new Uint32Array(1); crypto.getRandomValues(a);
     await withTimeout(setDoc(doc(db, "config", "startCode"), { code: String(a[0] % 10000).padStart(4, "0"), updatedAt: serverTimestamp() }));
+  },
+  // Proves a code is right (used by Change student): records a short "change" session, which the rules only allow with the right code.
+  async checkCode(code) {
+    const u = await currentUser();
+    await withTimeout(addDoc(collection(db, "sessions"), { uid: u.uid, code, studentName: "(change student)", className: "-", startedAt: serverTimestamp() }));
   },
   // Succeeds only if the code matches the teacher's current code (checked by the Firestore rules).
   async startSession(code, studentName, className) {
