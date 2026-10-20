@@ -11,6 +11,21 @@ service cloud.firestore {
       allow read, write: if isTeacher();
     }
 
+    // A laptop "unlocks" by sending the teacher's code. Only allowed if the code is right.
+    match /unlocked/{uid} {
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.code == get(/databases/$(database)/documents/config/startCode).data.code;
+      allow read: if isTeacher() || (request.auth != null && request.auth.uid == uid);
+    }
+
+    // The class lists. Only the teacher can change them, and only unlocked laptops can read them,
+    // so nobody sees student names without the teacher's code.
+    match /config/roster {
+      allow read: if isTeacher()
+        || (request.auth != null && exists(/databases/$(database)/documents/unlocked/$(request.auth.uid)));
+      allow write: if isTeacher();
+    }
+
     // A student's laptop creates a session by sending the code the teacher typed.
     // It is only allowed if that code matches the current start code, which students can never read.
     match /sessions/{sessionId} {
