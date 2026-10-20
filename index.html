@@ -73,6 +73,9 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .card .cname { display:block; font-size:24px; font-weight:bold; }
 .card .ccount { display:block; font-size:14px; color:var(--muted); }
 .card.picked { border-color:var(--cur); outline:2px solid var(--cur); }
+.status { font-size:18px; font-weight:bold; }
+.status.none { color:var(--bad); }
+.status.loaded { color:var(--ok); }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -131,12 +134,13 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     </div>
     <div id="tRosterPane" hidden>
       <h2>Class lists</h2>
-      <p id="rosterCurrent" class="note">Loading…</p>
+      <p id="rosterCurrent" class="status">Loading…</p>
       <p>Upload the school spreadsheet (.xlsx) or a CSV. It needs a sheet with the columns <b>Class</b>, <b>First name</b> and <b>Last name</b>, one student per row. If the workbook has a sheet called <b>All Students</b>, that sheet is used.</p>
       <p><label for="rosterFile">Spreadsheet: </label><input id="rosterFile" type="file" accept=".xlsx,.xls,.csv"></p>
       <div id="rosterSaveBar" class="savebar" hidden>
-        <p><b>Not saved yet.</b> This is a preview of the spreadsheet. Students won't see these lists until you save them.</p>
-        <p><button id="rosterSave" type="button">Save these class lists</button> <button id="rosterDiscard" type="button">Cancel</button></p>
+        <p class="err" style="font-size:20px">Class lists not loaded yet. Please confirm.</p>
+        <p>Check the classes below, then click Confirm. Students won't see these lists until you do.</p>
+        <p><button id="rosterSave" type="button">Confirm class lists</button> <button id="rosterDiscard" type="button">Cancel</button></p>
       </div>
       <p id="rosterMsg" class="note"></p>
       <div id="rosterPreview"></div>
@@ -816,10 +820,11 @@ $("tabRoster").addEventListener("click", () => showTab("roster"));
 // ---- Teacher console: Class lists upload ----
 function renderRosterCurrent() {
   const n = Object.keys(CLASSES).length;
-  if (!n) { $("rosterCurrent").textContent = "No class lists loaded yet. Students can't choose their name until you upload one."; return; }
+  if (!n) { $("rosterCurrent").className = "status none"; $("rosterCurrent").textContent = "No class lists loaded. Students can't choose their name until you upload and confirm one."; return; }
+  $("rosterCurrent").className = "status loaded";
   const count = Object.values(CLASSES).reduce((a, l) => a + l.length, 0);
   const when = rosterInfo && rosterInfo.updatedAt ? " Loaded " + rosterInfo.updatedAt.toDate().toLocaleString() + "." : "";
-  $("rosterCurrent").textContent = "Currently loaded: " + count + " students in " + n + " classes." + when;
+  $("rosterCurrent").textContent = "\u2713 Loaded: " + count + " students in " + n + " classes." + when;
 }
 
 let pendingRoster = null, previewWarnings = [], previewClass = null;
@@ -831,7 +836,7 @@ function renderRosterPreview() {
     classCards(pendingRoster, previewClass, "data-pclass") +
     (previewClass ? "<h3>" + escHtml(previewClass) + "</h3><ol class=\"namelist\">" + pendingRoster[previewClass].map(n => "<li>" + escHtml(n) + "</li>").join("") + "</ol>" : "") +
     (previewWarnings.length ? '<p class="err">Please check:</p><ul>' + previewWarnings.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "") +
-    "<p class=\"note\">Saving replaces the class lists that are loaded now. It does not delete any saved results.</p>";
+    (Object.keys(CLASSES).length ? "<p class=\"note\">Confirming replaces the class lists that are loaded now. It does not delete any saved results.</p>" : "");
 }
 $("rosterPreview").addEventListener("click", e => {
   const b = e.target.closest("[data-pclass]");
@@ -911,7 +916,7 @@ $("rosterDiscard").addEventListener("click", () => {
 });
 $("rosterSave").addEventListener("click", async () => {
   if (!pendingRoster) return;
-  $("rosterMsg").textContent = "Saving\u2026";
+  $("rosterMsg").textContent = "Confirming\u2026";
   try {
     await window.fb.saveRoster(pendingRoster);
     await loadRoster();
@@ -919,11 +924,11 @@ $("rosterSave").addEventListener("click", async () => {
     $("rosterSaveBar").hidden = true;
     $("rosterPreview").innerHTML = "";
     $("rosterFile").value = "";
-    $("rosterMsg").textContent = "Saved. Students will see the new class lists after the code is entered, or after they click Refresh.";
+    $("rosterMsg").textContent = "Class lists confirmed. Students will see them after the code is entered, or after they click Refresh.";
     renderRosterCurrent();
   } catch (e) {
     console.error(e);
-    $("rosterMsg").textContent = "Couldn't save. Check the internet, then try again.";
+    $("rosterMsg").textContent = "Couldn't confirm the class lists. Check the internet, then try again.";
   }
 });
 
