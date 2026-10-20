@@ -8,6 +8,10 @@
 <title>Class Typing Test</title>
 <style>
 /* MVP: plain, functional layout only. Styling comes later. */
+/* Base reset (the Claude preview added this automatically; a standalone page needs it). */
+[hidden] { display:none !important; }
+body { margin:0; }
+img { max-width:100%; }
 :root { --bg:#ffffff; --fg:#1b1b1b; --muted:#6b6b6b; --line:#c8c8c8; --ok:#1a7f37; --bad:#c62828; --badbg:#fde8e8; --cur:#1f5fbf; --warn:#c77700; --warnbg:#ffe7b3; --barold:#b5d4f4; --barnew:#2a78d6; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#161616; --fg:#ececec; --muted:#9a9a9a; --line:#444; --ok:#5cc87a; --bad:#ff7070; --badbg:#4a1f1f; --cur:#7aa7ff; --warn:#ffb53d; --warnbg:#3d2a00; --barold:#2f4a66; --barnew:#5a9ef0; color-scheme:dark; } }
 :root[data-theme="dark"] { --bg:#161616; --fg:#ececec; --muted:#9a9a9a; --line:#444; --ok:#5cc87a; --bad:#ff7070; --badbg:#4a1f1f; --cur:#7aa7ff; --warn:#ffb53d; --warnbg:#3d2a00; --barold:#2f4a66; --barnew:#5a9ef0; color-scheme:dark; }
