@@ -79,6 +79,8 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .status.loaded { color:var(--ok); }
 .proof { margin:8px 0 16px; }
 .proof button { font-size:22px; padding:14px 24px; font-weight:bold; }
+.danger { margin-top:40px; border-top:3px solid var(--bad); padding-top:8px; }
+.redbtn { background:var(--bad); color:#ffffff; border:none; border-radius:6px; font-weight:bold; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -148,6 +150,18 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
       </div>
       <p id="rosterMsg" class="note"></p>
       <div id="rosterPreview"></div>
+      <div class="danger">
+        <h2>Clear test data</h2>
+        <p>Deletes saved test results. The class lists and the start code are kept. <b>This can't be undone.</b></p>
+        <p><button id="wipeRoster" type="button" class="redbtn">Delete results for students on the class lists</button></p>
+        <p><button id="wipeAll" type="button" class="redbtn">Delete all results</button></p>
+        <div id="wipeConfirm" class="savebar" hidden>
+          <p class="err" id="wipeWhat"></p>
+          <p><label for="wipeInput">Type DELETE to confirm: </label><input id="wipeInput" type="text" autocomplete="off">
+            <button id="wipeGo" type="button" class="redbtn">Delete</button> <button id="wipeCancel" type="button">Cancel</button></p>
+        </div>
+        <p id="wipeMsg" class="status"></p>
+      </div>
     </div>
     <div id="tClassPane" hidden>
       <h2>Choose a class</h2>
@@ -911,6 +925,42 @@ $("tabCode").addEventListener("click", () => showTab("code"));
 $("tabClasses").addEventListener("click", () => showTab("classes"));
 $("tabRoster").addEventListener("click", () => showTab("roster"));
 
+// ---- Teacher console: clear test data ----
+let wipeMode = null;
+function askWipe(mode) {
+  wipeMode = mode;
+  $("wipeWhat").textContent = mode === "roster"
+    ? "This deletes every saved result for students on the current class lists."
+    : "This deletes every saved result in the database, for everyone.";
+  $("wipeInput").value = "";
+  $("wipeMsg").textContent = "";
+  $("wipeConfirm").hidden = false;
+  $("wipeInput").focus();
+}
+$("wipeRoster").addEventListener("click", () => askWipe("roster"));
+$("wipeAll").addEventListener("click", () => askWipe("all"));
+$("wipeCancel").addEventListener("click", () => { $("wipeConfirm").hidden = true; wipeMode = null; });
+$("wipeGo").addEventListener("click", async () => {
+  if ($("wipeInput").value.trim() !== "DELETE") { $("wipeMsg").className = "status none"; $("wipeMsg").textContent = "Type DELETE in capitals to confirm."; return; }
+  const onList = d => (CLASSES[d.className] || []).includes(d.studentName);
+  const keep = wipeMode === "roster" ? onList : () => true;
+  $("wipeConfirm").hidden = true;
+  $("wipeMsg").className = "status";
+  $("wipeMsg").textContent = "Deleting\u2026";
+  try {
+    const n = await window.fb.deleteResults(keep, wipeMode === "all");
+    $("wipeMsg").className = "status loaded";
+    $("wipeMsg").textContent = "\u2713 Deleted " + n + " saved test" + (n === 1 ? "" : "s") + ".";
+  } catch (e) {
+    console.error(e);
+    $("wipeMsg").className = "status none";
+    $("wipeMsg").textContent = e.code === "permission-denied"
+      ? "Firebase refused. Check the latest rules are published, then try again."
+      : "Couldn't finish deleting. Check the internet, then try again.";
+  }
+  wipeMode = null;
+});
+
 // ---- Teacher console: Class lists upload ----
 function renderRosterCurrent() {
   const n = Object.keys(CLASSES).length;
@@ -1201,7 +1251,7 @@ document.querySelectorAll(".home").forEach(b => b.addEventListener("click", asyn
 // Firebase connection. The settings below are meant to be public; the Firestore rules protect the data.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, getDocs, writeBatch, setDoc, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8dYmDCBJN1nvaEKn8PUDb1_j3KShk3EM",
@@ -1281,6 +1331,21 @@ window.fb = {
     const b = onSnapshot(query(collection(db, "sessions"), where("className", "==", className)),
       s => { data.sessions = s.docs.map(d => d.data(opts)); cb(data); }, e => console.error(e));
     return () => { a(); b(); };
+  },
+  // Deletes saved results (and their sessions) that match pick(data). With everything=true, also clears
+  // every session and unlocked laptop. Returns how many results were deleted.
+  async deleteResults(pick, everything) {
+    const refs = [];
+    let count = 0;
+    (await getDocs(collection(db, "results"))).forEach(d => { if (pick(d.data())) { refs.push(d.ref); count++; } });
+    (await getDocs(collection(db, "sessions"))).forEach(d => { if (everything || pick(d.data())) refs.push(d.ref); });
+    if (everything) (await getDocs(collection(db, "unlocked"))).forEach(d => refs.push(d.ref));
+    for (let i = 0; i < refs.length; i += 400) {
+      const b = writeBatch(db);
+      refs.slice(i, i + 400).forEach(r => b.delete(r));
+      await b.commit();
+    }
+    return count;
   },
   watchResults(cb) {
     return onSnapshot(query(collection(db, "results"), orderBy("savedAt", "desc"), limit(20)),

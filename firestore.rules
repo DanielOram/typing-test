@@ -16,6 +16,7 @@ service cloud.firestore {
       allow create, update: if request.auth != null && request.auth.uid == uid
         && request.resource.data.code == get(/databases/$(database)/documents/config/startCode).data.code;
       allow read: if isTeacher() || (request.auth != null && request.auth.uid == uid);
+      allow delete: if isTeacher();
     }
 
     // The class lists. Only the teacher can change them, and only unlocked laptops can read them,
@@ -34,7 +35,7 @@ service cloud.firestore {
         && request.resource.data.studentName is string
         && request.resource.data.className is string
         && request.resource.data.code == get(/databases/$(database)/documents/config/startCode).data.code;
-      allow read: if isTeacher();
+      allow read, delete: if isTeacher();
     }
 
     // Test results. A laptop can only save results for the student its own session was opened for.
