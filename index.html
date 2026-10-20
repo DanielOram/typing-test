@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<title>Class Typing Test</title>
+<style>
+/* MVP: plain, functional layout only. Styling comes later. */
+:root { --bg:#ffffff; --fg:#1b1b1b; --muted:#6b6b6b; --line:#c8c8c8; --ok:#1a7f37; --bad:#c62828; --badbg:#fde8e8; --cur:#1f5fbf; --warn:#c77700; --warnbg:#ffe7b3; --barold:#b5d4f4; --barnew:#2a78d6; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#161616; --fg:#ececec; --muted:#9a9a9a; --line:#444; --ok:#5cc87a; --bad:#ff7070; --badbg:#4a1f1f; --cur:#7aa7ff; --warn:#ffb53d; --warnbg:#3d2a00; --barold:#2f4a66; --barnew:#5a9ef0; color-scheme:dark; } }
+:root[data-theme="dark"] { --bg:#161616; --fg:#ececec; --muted:#9a9a9a; --line:#444; --ok:#5cc87a; --bad:#ff7070; --badbg:#4a1f1f; --cur:#7aa7ff; --warn:#ffb53d; --warnbg:#3d2a00; --barold:#2f4a66; --barnew:#5a9ef0; color-scheme:dark; }
+body { background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,sans-serif; font-size:16px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); padding-block:16px; }
+main { max-width:900px; margin:0 auto; }
+#timer { font-size:40px; font-weight:bold; font-variant-numeric:tabular-nums; margin:8px 0; }
+#hint { color:var(--muted); margin:4px 0 8px; }
+#box { position:relative; font-size:28px; line-height:1.8; height:calc(28px * 1.8 * 3); overflow:hidden;
+  border:4px solid var(--line); padding:8px 12px; outline:none; cursor:text; }
+#box:focus { border-color:var(--cur); }
+/* Not typing into the test: whole page turns amber, words fade, big message shows */
+#boxWrap { position:relative; }
+body.away { background:var(--warnbg); }
+body.away #box { border-color:var(--warn); } /* colour only, same width, so nothing moves */
+#awayMsg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center;
+  font-size:32px; font-weight:bold; color:var(--warn); pointer-events:none; padding:8px; }
+/* Solid panel inside the amber border hides the words so the message is easy to read */
+#awayMsg { inset:4px; background:var(--warnbg); }
+.w { display:inline-block; margin-right:0.45em; }
+.w.active { border-bottom:2px solid var(--cur); }
+.ok { color:var(--ok); }
+.bad, .extra { color:var(--bad); background:var(--badbg); }
+.miss { color:var(--muted); text-decoration:underline; text-decoration-color:var(--bad); }
+.caret { box-shadow:-2px 0 0 var(--cur); }
+.caret-after { box-shadow:2px 0 0 var(--cur); }
+button { font-size:20px; padding:10px 20px; cursor:pointer; }
+table { border-collapse:collapse; margin:12px 0; font-size:18px; }
+td { padding:6px 16px 6px 0; border-bottom:1px solid var(--line); }
+td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
+.big { font-size:48px; font-weight:bold; margin:8px 0; }
+/* Progress chart: one bar per finished test this session; newest is dark blue. Scrolls sideways if many. */
+#chartWrap { overflow-x:auto; margin:16px 0; }
+#chart { display:flex; gap:12px; align-items:flex-end; min-height:230px; }
+.col { cursor:pointer; flex:1 0 56px; max-width:110px; display:flex; flex-direction:column; justify-content:flex-end; text-align:center; }
+.val { font-size:16px; font-variant-numeric:tabular-nums; color:var(--muted); margin-bottom:4px; }
+.bar { background:var(--barold); border-radius:4px 4px 0 0; }
+.tlabel { font-size:14px; color:var(--muted); border-top:2px solid var(--line); padding-top:6px; white-space:nowrap; }
+.col.selected .bar { background:var(--barnew); }
+.col.selected .val, .col.selected .tlabel { color:var(--fg); font-weight:bold; }
+/* Start screen: big buttons for class and name */
+.grade { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 8px; }
+.pick { min-width:80px; }
+#nameList { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:8px; }
+#nameList .pick { text-align:left; }
+.pick.picked { outline:4px solid var(--cur); font-weight:bold; }
+.note { color:var(--muted); }
+.err { color:var(--bad); font-weight:bold; min-height:1.2em; }
+.code { font-size:96px; font-weight:bold; letter-spacing:0.15em; font-variant-numeric:tabular-nums; margin:8px 0; }
+input { font-size:20px; padding:8px; }
+#studentBar { font-size:20px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+#who { font-weight:bold; }
+details { margin-top:32px; color:var(--muted); }
+pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--line); padding:8px; white-space:pre-wrap; word-break:break-all; }
+</style>
+
+<main>
+  <h1>Typing Test</h1>
+
+  <section id="homeView">
+    <h2>Are you a teacher or a student?</h2>
+    <div class="grade"><button id="asTeacher" type="button" class="pick">Teacher</button> <button id="asStudent" type="button" class="pick">Student</button></div>
+  </section>
+
+  <section id="teacherLogin" hidden>
+    <h2>Teacher sign in</h2>
+    <p><label for="tPass">Password: </label><input id="tPass" type="password" autocomplete="off"> <button id="tEnter" type="button">Enter</button></p>
+    <p id="tErr" class="err"></p>
+    <p><button class="home" type="button">Back</button></p>
+  </section>
+
+  <section id="teacherView" hidden>
+    <h2>Start code</h2>
+    <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
+    <div class="code" id="tCode">----</div>
+    <p class="note" id="tCodeNext"></p>
+    <p><button class="home" type="button">Sign out</button></p>
+  </section>
+
+  <section id="startView" hidden>
+    <p><button class="home" type="button">Back</button></p>
+    <h2>1. Choose your class</h2>
+    <div id="classList"></div>
+    <h2>2. Choose your name</h2>
+    <div id="nameList"><p class="note">Choose your class first.</p></div>
+    <p><button id="go" type="button" disabled>Start typing test</button></p>
+  </section>
+
+  <section id="codeView" hidden>
+    <h2 id="cWho"></h2>
+    <p>Put your hand up. Your teacher will type the code.</p>
+    <p><label for="cInput">Code: </label><input id="cInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off"> <button id="cEnter" type="button">Start</button></p>
+    <p id="cErr" class="err"></p>
+    <p><button id="cBack" type="button">Back</button></p>
+  </section>
+
+  <div id="appView" hidden>
+  <p id="studentBar"><span id="who"></span> <button id="change" type="button">Change student</button></p>
+  <button id="restart" type="button">Restart test</button>
+
+  <section id="testView">
+    <p>
+      <label for="duration">Test length: </label>
+      <select id="duration">
+        <option value="60" selected>1 minute</option>
+        <option value="120">2 minutes</option>
+        <option value="180">3 minutes</option>
+        <option value="300">5 minutes</option>
+        <option value="600">10 minutes</option>
+      </select>
+      <button id="stop" type="button">Stop test</button>
+    </p>
+    <div id="timer">1:00</div>
+    <p id="hint">Start typing to begin. The timer starts on your first key.</p>
+    <div id="boxWrap">
+      <div id="box" tabindex="0" aria-label="Typing area"><div id="words"></div></div>
+      <div id="awayMsg" hidden>Click here to start typing</div>
+    </div>
+  </section>
+
+  <section id="resultView" hidden>
+    <h2 id="rTitle">Your result</h2>
+    <div class="big"><span id="rNet">0</span> words per minute</div>
+    <div id="chartWrap"><div id="chart"></div></div>
+    <table><tbody id="rTable"></tbody></table>
+  </section>
+  </div>
+
+  <details>
+    <summary>Raw data (teacher testing only)</summary>
+    <p>Every attempt this session, including every keystroke. This is what will be exported later.</p>
+    <button id="copyRaw" type="button">Copy raw data</button> <span id="copyMsg"></span>
+    <pre id="raw">No attempts yet.</pre>
+  </details>
+</main>
+
+<script>
+// Clock display, e.g. 157 -> "2:37"
+function fmt(sec) { const m = Math.floor(sec / 60), r = sec % 60; return m + ":" + String(r).padStart(2, "0"); }
+// Results display, e.g. 157.3 -> "2 min 37 s"
+function fmtLong(sec) {
+  const whole = Math.floor(sec), m = Math.floor(whole / 60), r = whole % 60;
+  if (m === 0) return r + " s";
+  return r === 0 ? m + " min" : m + " min " + r + " s";
+}
+
+const PASSAGES = [
+  "The sun is up. Sam and his dog go to the park. The dog likes to run on the green grass. Sam has a red ball. He throws the ball, and the dog runs fast to get it. They play all day. When the sun goes down, they walk home. Mom has hot soup for dinner. Sam is happy. The dog is happy too. They sleep well at night.",
+  "My name is Lily. I am in grade two. I go to school on the bus. At school, I read books and I play with my friends. My best friend is Max. He likes to draw cats and fish. I like to sing songs. We eat lunch at twelve. I eat rice, an apple, and a cookie. After school, I do my homework. Then I help my dad cook.",
+  "It is a cold day. The sky is gray, and it starts to snow. Ben puts on his hat, his coat, and his boots. He goes out to play. He makes a big snowman with a long nose. His sister Ana comes out too. They throw snow at each other and laugh. Their hands get very cold. They go inside and drink warm milk.",
+  "We have a small garden at home. In spring, we plant seeds in the soil. We give them water every day. Soon, little green leaves come up. The plants grow tall in the sun. We grow beans, carrots, and big red tomatoes. Bees and birds visit our garden. In summer, we pick the food and eat it. It tastes very good!"
+];
+
+const $ = id => document.getElementById(id);
+const box = $("box"), wordsEl = $("words"), timerEl = $("timer"), hintEl = $("hint");
+// SAMPLE class lists. To be replaced with the real spreadsheet.
+const FIRST = ["Aiden","Amira","Ben","Chloe","Daniel","Dilnoza","Emma","Farrukh","Grace","Hana","Ivan","Jasmine","Kai","Laila","Leo","Lily","Madina","Max","Mia","Noah","Olivia","Omar","Sami","Rustam","Sara","Sofia","Timur","Yuna","Zara","Adam","Bella","Damir","Elif","Jin","Kamila","Liam","Nilufar","Ryan","Seo-yeon","Tom"];
+const LAST = ["Kim","Lee","Park","Smith","Karimov","Usmonova","Chen","Ali","Brown","Tashkentov","Wang","Nguyen","Ivanova","Khan","Yilmaz","Sato","Garcia","Rahimov","Jones","Choi"];
+const CLASSES = {};
+[2, 3, 4, 5].forEach((g, gi) => ["A","B","C","D","E"].forEach((l, li) => {
+  const c = gi * 5 + li, count = 10 + (c * 3) % 9; // 10 to 18 students
+  const names = [];
+  for (let k = 0; k < count; k++) names.push(FIRST[(c * 11 + k) % FIRST.length] + " " + LAST[(c * 3 + k * 7) % LAST.length]);
+  CLASSES[g + l] = names.sort();
+}));
+
+let student = null;        // { cls, name }
+const histories = {};      // each student's finished tests this session (for their chart)
+const allResults = [];     // every finished test this session, all students (for export later)
+let history = [];
+let attemptNo = 0;
+let s; // current test state
+let wordEls = [];
+
+function esc(c) { return c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === "&" ? "&amp;" : c; }
+
+function buildWords(start) {
+  const parts = [];
+  // Repeat the passages so even a fast 10-minute test never runs out of words.
+  for (let i = 0; i < PASSAGES.length * 8; i++) parts.push(PASSAGES[(start + i) % PASSAGES.length]);
+  return parts.join(" ").split(/\s+/);
+}
+
+function newTest() {
+  if (s && s.timerId) clearInterval(s.timerId);
+  attemptNo++;
+  const start = (attemptNo - 1) % PASSAGES.length;
+  s = { duration:Number($("duration").value), passageStart:start, words:buildWords(start), typed:[""], wi:0, started:false, ended:false,
+        t0:0, timerId:null, keys:[] };
+  wordsEl.innerHTML = s.words.map(() => '<span class="w"></span>').join("");
+  wordEls = Array.from(wordsEl.children);
+  s.words.forEach((_, i) => renderWord(i));
+  timerEl.textContent = fmt(s.duration);
+  $("duration").disabled = false;
+  hintEl.textContent = "Start typing to begin. The timer starts on your first key.";
+  $("testView").hidden = false;
+  $("resultView").hidden = true;
+  $("restart").textContent = "Restart test";
+  box.scrollTop = 0; // must happen after the box is visible
+  box.focus();
+  updateAway();
+}
+
+function renderWord(i) {
+  const el = wordEls[i], w = s.words[i], t = s.typed[i] || "";
+  const isCur = i === s.wi, done = i < s.wi;
+  let html = "";
+  const caretAfter = isCur && t.length >= w.length;
+  const total = Math.max(w.length, t.length);
+  for (let j = 0; j < total; j++) {
+    let cls;
+    let ch;
+    if (j < w.length) {
+      ch = w[j];
+      cls = j < t.length ? (t[j] === w[j] ? "ok" : "bad") : (done ? "miss" : "");
+    } else {
+      ch = t[j];
+      cls = "extra";
+    }
+    if (isCur && j === t.length) cls += " caret";
+    if (caretAfter && j === total - 1) cls += " caret-after";
+    html += '<span class="' + cls.trim() + '">' + esc(ch) + "</span>";
+  }
+  el.innerHTML = html;
+  el.className = "w" + (isCur ? " active" : "");
+}
+
+function ms() { return Math.round(performance.now() - s.t0); }
+
+function start() {
+  s.started = true;
+  s.t0 = performance.now();
+  $("duration").disabled = true; // can't change length mid-test
+  hintEl.textContent = "Keep going!";
+  s.timerId = setInterval(tick, 100);
+}
+
+function tick() {
+  const elapsed = (performance.now() - s.t0) / 1000;
+  timerEl.textContent = fmt(Math.max(0, Math.ceil(s.duration - elapsed)));
+  if (elapsed >= s.duration) endTest(false);
+}
+
+function typeChar(k) {
+  const i = s.wi, w = s.words[i], cur = s.typed[i], pos = cur.length;
+  const expected = pos < w.length ? w[pos] : "";
+  s.keys.push({ t:ms(), type:"char", key:k, expected, correct:k === expected, word:i, pos });
+  if (cur.length < w.length + 10) s.typed[i] = cur + k;
+  renderWord(i);
+}
+
+function backspace() {
+  const i = s.wi, cur = s.typed[i];
+  if (cur.length === 0) {
+    if (i === 0) {
+      s.keys.push({ t:ms(), type:"backspace", key:"Backspace", removed:"", word:0, pos:0 });
+      return; // already at the very beginning
+    }
+    // Delete the space: step back into the previous word, with its letters kept so they can be fixed.
+    s.keys.push({ t:ms(), type:"backspace", key:"Backspace", removed:" ", word:i - 1, pos:s.typed[i - 1].length });
+    s.typed.pop();
+    s.wi = i - 1;
+    renderWord(i);
+    renderWord(s.wi);
+    const el = wordEls[s.wi];
+    box.scrollTop = Math.max(0, el.offsetTop - 8 - el.offsetHeight);
+    return;
+  }
+  s.keys.push({ t:ms(), type:"backspace", key:"Backspace", removed:cur[cur.length - 1], word:i, pos:cur.length - 1 });
+  s.typed[i] = cur.slice(0, -1);
+  renderWord(i);
+}
+
+function space() {
+  const i = s.wi, w = s.words[i], cur = s.typed[i];
+  if (cur.length === 0) {
+    s.keys.push({ t:ms(), type:"space", key:" ", expected:"", correct:false, accepted:false, word:i, pos:0 });
+    return; // ignore space at the start of a word
+  }
+  const expected = cur.length >= w.length ? " " : w[cur.length];
+  s.keys.push({ t:ms(), type:"space", key:" ", expected, correct:cur.length === w.length, accepted:true, word:i, pos:cur.length });
+  s.wi++;
+  s.typed.push("");
+  renderWord(i);
+  if (s.wi >= s.words.length) { endTest(); return; }
+  renderWord(s.wi);
+  const el = wordEls[s.wi];
+  box.scrollTop = Math.max(0, el.offsetTop - 8 - el.offsetHeight);
+}
+
+// Keys only count while the typing box is active (blue border). When the amber warning shows, nothing counts.
+box.addEventListener("keydown", e => {
+  if (!s || s.ended) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === "Backspace") { e.preventDefault(); if (s.started) backspace(); return; }
+  if (k === " ") { e.preventDefault(); if (s.started) space(); return; }
+  if (k.length !== 1) return;
+  e.preventDefault();
+  if (!s.started) start();
+  typeChar(k);
+});
+
+box.addEventListener("click", () => box.focus());
+// Show the amber warning whenever keys would NOT reach the test.
+function updateAway() {
+  const active = document.hasFocus() && document.activeElement === box;
+  const away = !$("appView").hidden && !!s && !s.ended && !active;
+  document.body.classList.toggle("away", away);
+  $("awayMsg").hidden = !away;
+  $("awayMsg").textContent = s && s.started ? "Click here to keep typing" : "Click here to start typing";
+}
+box.addEventListener("blur", () => setTimeout(updateAway, 0));
+box.addEventListener("focus", updateAway);
+window.addEventListener("blur", updateAway);
+window.addEventListener("focus", () => setTimeout(updateAway, 0));
+document.addEventListener("visibilitychange", updateAway);
+
+function computeResults(elapsed, stoppedEarly) {
+  let correctChars = 0, incorrectChars = 0, extraChars = 0, missedChars = 0;
+  let correctWords = 0, incorrectWords = 0, spaces = 0;
+  const words = [];
+  for (let i = 0; i <= s.wi && i < s.words.length; i++) {
+    const w = s.words[i], t = s.typed[i] || "", done = i < s.wi;
+    if (!done && t.length === 0) break;
+    for (let j = 0; j < Math.max(w.length, t.length); j++) {
+      if (j < t.length && j < w.length) { if (t[j] === w[j]) correctChars++; else incorrectChars++; }
+      else if (j < t.length) extraChars++;
+      else if (done) missedChars++;
+    }
+    let wordCorrect = t === w;
+    if (done) { spaces++; if (wordCorrect) correctWords++; else incorrectWords++; }
+    else if (t !== w.slice(0, t.length)) incorrectWords++; // unfinished last word with a mistake
+    words.push({ target:w, typed:t, correct:wordCorrect, finished:done });
+  }
+
+  const charKeys = s.keys.filter(k => k.type === "char");
+  const acceptedSpaces = s.keys.filter(k => k.type === "space" && k.accepted);
+  const counted = charKeys.concat(acceptedSpaces);
+  const correctKeys = counted.filter(k => k.correct).length;
+  const wrongKeys = counted.length - correctKeys;
+  const backspaces = s.keys.filter(k => k.type === "backspace").length;
+
+  const minutes = elapsed / 60;
+  const typedChars = correctChars + incorrectChars + extraChars + spaces;
+  const gross = minutes > 0 ? (typedChars / 5) / minutes : 0;
+  const net = minutes > 0 ? Math.max(0, gross - incorrectWords / minutes) : 0;
+  const uncorrected = incorrectChars + extraChars + missedChars;
+
+  return {
+    studentName: student.name,
+    className: student.cls,
+    attempt: attemptNo,
+    finishedAt: new Date().toISOString(),
+    passageStart: s.passageStart,
+    testLength: s.duration,
+    stoppedEarly,
+    elapsedMs: Math.round(elapsed * 1000),
+    seconds: Math.round(elapsed * 100) / 100,
+    netWpm: Math.round(net),
+    grossWpm: Math.round(gross),
+    accuracy: counted.length ? Math.round((correctKeys / counted.length) * 1000) / 10 : 0,
+    correctWords, incorrectWords,
+    correctChars, incorrectChars, extraChars, missedChars,
+    correctedErrors: Math.max(0, wrongKeys - incorrectChars - extraChars),
+    uncorrectedErrors: uncorrected,
+    totalKeystrokes: s.keys.length,
+    backspaces,
+    words,
+    keystrokes: s.keys
+  };
+}
+
+function endTest(stoppedEarly) {
+  if (s.ended) return;
+  s.ended = true;
+  clearInterval(s.timerId);
+  // Exact time from first key to the end (or to the Stop click), capped at the chosen length.
+  const elapsed = s.started ? Math.min(s.duration, (performance.now() - s.t0) / 1000) : 0;
+  const r = computeResults(elapsed, !!stoppedEarly);
+  history.push(r);
+  allResults.push(r);
+  showResults();
+}
+
+// Fill the stats with one test's numbers and highlight its bar.
+function showStats(i) {
+  const r = history[i];
+  $("rTitle").textContent = "Test " + (i + 1) + " result";
+  $("rNet").textContent = r.netWpm;
+  const rows = [
+    ["Speed after mistakes (net)", r.netWpm + " wpm"],
+    ["Raw speed (gross)", r.grossWpm + " wpm"],
+    ["Accuracy", r.accuracy + "%"],
+    ["Correct words", r.correctWords],
+    ["Wrong words", r.incorrectWords],
+    ["Correct letters", r.correctChars],
+    ["Wrong letters", r.incorrectChars],
+    ["Extra letters", r.extraChars],
+    ["Missed letters", r.missedChars],
+    ["Mistakes fixed", r.correctedErrors],
+    ["Mistakes not fixed", r.uncorrectedErrors],
+    ["Time typed", fmtLong(r.seconds)]
+  ];
+  $("rTable").innerHTML = rows.map(([a, b]) => "<tr><td>" + a + "</td><td>" + b + "</td></tr>").join("");
+  document.querySelectorAll("#chart .col").forEach((c, j) => c.classList.toggle("selected", j === i));
+}
+
+// A test just finished: show it, with the newest bar selected.
+function showResults() {
+  $("raw").textContent = JSON.stringify(allResults, null, 2);
+  $("testView").hidden = true;
+  $("resultView").hidden = false;
+  renderChart(); // after the results are visible, so it can scroll to the newest bar
+  showStats(history.length - 1);
+  $("restart").textContent = "Retake test";
+  if (document.activeElement) document.activeElement.blur();
+  updateAway();
+}
+
+// Bar chart of net wpm for every finished test this session. Restarted (thrown away) tests are not included.
+function renderChart() {
+  const BAR_MAX = 180; // px height of the tallest bar
+  const top = Math.max(1, ...history.map(h => h.netWpm));
+  $("chart").innerHTML = history.map((h, i) => {
+    const hgt = Math.max(2, Math.round(h.netWpm / top * BAR_MAX)); // a 0 still shows as a thin line
+    return '<div class="col" data-i="' + i + '" title="Show Test ' + (i + 1) + '"><div class="val">' + h.netWpm + '</div>' +
+           '<div class="bar" style="height:' + hgt + 'px"></div>' +
+           '<div class="tlabel">Test ' + (i + 1) + '</div></div>';
+  }).join("");
+  $("chartWrap").scrollLeft = $("chartWrap").scrollWidth; // keep the newest bar in view
+}
+
+// Click a bar (or its number or label) to see that test's stats.
+$("chart").addEventListener("click", e => {
+  const col = e.target.closest(".col");
+  if (col) showStats(Number(col.dataset.i));
+});
+
+// One button: "Restart test" during a test (unfinished test is thrown away), "Retake test" on results.
+// Only a real mouse/trackpad click works; Space/Enter are ignored.
+$("restart").addEventListener("click", e => { if (e.detail === 0) return; newTest(); });
+$("restart").addEventListener("keydown", e => e.preventDefault());
+// Stop: end now and score on the time actually typed. Mouse/trackpad only.
+$("stop").addEventListener("click", e => { if (e.detail === 0) return; if (s && !s.ended) endTest(true); });
+$("stop").addEventListener("keydown", e => e.preventDefault());
+// Picking a new length before typing sets up a fresh test of that length.
+$("duration").addEventListener("change", () => { if (!s.started) newTest(); });
+
+$("copyRaw").addEventListener("click", () => {
+  const text = $("raw").textContent;
+  navigator.clipboard.writeText(text).then(
+    () => { $("copyMsg").textContent = "Copied."; },
+    () => {
+      const range = document.createRange();
+      range.selectNodeContents($("raw"));
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      $("copyMsg").textContent = "Text selected. Press Command+C to copy.";
+    }
+  );
+});
+
+// ---- Start screen: class, then name, then go ----
+let pickedClass = null, pickedName = null;
+
+function renderClassList() {
+  const grades = {};
+  Object.keys(CLASSES).forEach(c => (grades[c[0]] = grades[c[0]] || []).push(c));
+  $("classList").innerHTML = Object.values(grades).map(list =>
+    '<div class="grade">' + list.map(c =>
+      '<button type="button" class="pick' + (c === pickedClass ? " picked" : "") + '" data-class="' + c + '">' + c + "</button>").join("") + "</div>"
+  ).join("");
+}
+
+function renderNameList() {
+  if (!pickedClass) { $("nameList").innerHTML = '<p class="note">Choose your class first.</p>'; return; }
+  $("nameList").innerHTML = CLASSES[pickedClass].map(n =>
+    '<button type="button" class="pick' + (n === pickedName ? " picked" : "") + '" data-name="' + n + '">' + n + "</button>").join("");
+}
+
+$("classList").addEventListener("click", e => {
+  const b = e.target.closest("[data-class]");
+  if (!b) return;
+  pickedClass = b.dataset.class;
+  pickedName = null;
+  $("go").disabled = true;
+  renderClassList();
+  renderNameList();
+});
+
+$("nameList").addEventListener("click", e => {
+  const b = e.target.closest("[data-name]");
+  if (!b) return;
+  pickedName = b.dataset.name;
+  $("go").disabled = false;
+  renderNameList();
+});
+
+// Name chosen: go to the code screen. The teacher types the code to let them start.
+$("go").addEventListener("click", () => {
+  if (!pickedClass || !pickedName) return;
+  $("cWho").textContent = pickedName + " · Class " + pickedClass;
+  $("cInput").value = "";
+  $("cErr").textContent = "";
+  showView("codeView");
+  $("cInput").focus();
+});
+
+async function checkStudentCode() {
+  const v = $("cInput").value.trim();
+  if (await codeIsValid(v)) enterTest();
+  else { $("cErr").textContent = "That code is not right. Ask your teacher."; $("cInput").value = ""; $("cInput").focus(); }
+}
+$("cEnter").addEventListener("click", checkStudentCode);
+$("cInput").addEventListener("keydown", e => { if (e.key === "Enter") checkStudentCode(); });
+$("cBack").addEventListener("click", () => showView("startView"));
+
+function enterTest() {
+  student = { cls:pickedClass, name:pickedName };
+  const key = student.cls + "|" + student.name;
+  history = histories[key] = histories[key] || []; // a returning student keeps their chart
+  $("who").textContent = student.name + " · Class " + student.cls;
+  showView("appView");
+  if (history.length) showResults(); // back to their latest result
+  else newTest();
+}
+
+// Change student: abandon any test in progress (not saved) and go back to the start screen.
+$("change").addEventListener("click", e => {
+  if (e.detail === 0) return;
+  if (s && s.timerId) clearInterval(s.timerId);
+  s = null;
+  // Keep their class AND name selected, so an accidental click costs one click to undo.
+  $("go").disabled = !pickedName;
+  renderClassList(); renderNameList();
+  $("appView").hidden = true;
+  $("startView").hidden = false;
+  updateAway();
+});
+$("change").addEventListener("keydown", e => e.preventDefault());
+
+// ---- Home, teacher sign in, start codes ----
+// NOTE: this keeps students out, not determined hackers: the check runs in the page itself.
+const PASS_HASH = "973d56f395a10bb3728d97b01dee65cfc9d7323bf90e3b31066b09294760b86c"; // SHA-256 of the teacher password
+const CODE_SECRET = "1ce80cf0b73da87ac84dc7e546c047d4";
+const CODE_WINDOW_MS = 10 * 60 * 1000; // code changes every 10 minutes
+const VIEWS = ["homeView", "teacherLogin", "teacherView", "startView", "codeView", "appView"];
+let teacherTimer = null;
+
+function showView(id) {
+  VIEWS.forEach(v => { $(v).hidden = v !== id; });
+  updateAway();
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+// Same 4-digit code on every laptop for the same 10-minute window, worked out from the clock.
+async function codeFor(win) {
+  const h = await sha256Hex(CODE_SECRET + ":" + win);
+  return String(parseInt(h.slice(0, 8), 16) % 10000).padStart(4, "0");
+}
+// Accept this window's code plus the one before and after, so a code doesn't die mid-walk or on a slightly-off clock.
+async function codeIsValid(v) {
+  if (!/^\d{4}$/.test(v)) return false;
+  const win = Math.floor(Date.now() / CODE_WINDOW_MS);
+  for (const w of [win - 1, win, win + 1]) if (v === await codeFor(w)) return true;
+  return false;
+}
+
+async function updateTeacherCode() {
+  const now = Date.now(), win = Math.floor(now / CODE_WINDOW_MS);
+  $("tCode").textContent = await codeFor(win);
+  const left = Math.ceil(((win + 1) * CODE_WINDOW_MS - now) / 1000);
+  $("tCodeNext").textContent = "New code in " + fmt(left) + ". The old code still works for 10 more minutes after that.";
+}
+
+async function checkTeacherPass() {
+  if (await sha256Hex($("tPass").value) === PASS_HASH) {
+    $("tPass").value = "";
+    showView("teacherView");
+    updateTeacherCode();
+    teacherTimer = setInterval(updateTeacherCode, 1000);
+  } else {
+    $("tErr").textContent = "Wrong password.";
+    $("tPass").value = "";
+    $("tPass").focus();
+  }
+}
+
+$("asTeacher").addEventListener("click", () => { $("tErr").textContent = ""; showView("teacherLogin"); $("tPass").focus(); });
+$("asStudent").addEventListener("click", () => { renderClassList(); renderNameList(); showView("startView"); });
+$("tEnter").addEventListener("click", checkTeacherPass);
+$("tPass").addEventListener("keydown", e => { if (e.key === "Enter") checkTeacherPass(); });
+
+// Back / Sign out: return to the teacher-or-student question.
+document.querySelectorAll(".home").forEach(b => b.addEventListener("click", () => {
+  if (teacherTimer) { clearInterval(teacherTimer); teacherTimer = null; }
+  $("tCode").textContent = "----";
+  showView("homeView");
+}));
+
+renderClassList();
+</script>
+</body>
+</html>
