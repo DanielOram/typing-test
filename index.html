@@ -86,6 +86,7 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 #restart.again { background:#1a7f37; color:#ffffff; border:none; border-radius:8px; font-size:24px; font-weight:bold; padding:14px 28px; }
 #restart.again:hover { background:#156a2d; }
 .newtag { display:inline-block; font-size:12px; font-weight:bold; color:#ffffff; background:var(--warn); border-radius:4px; padding:1px 6px; margin-left:6px; vertical-align:middle; }
+.bigbtn { font-size:22px; padding:14px 24px; font-weight:bold; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -133,7 +134,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
 
   <section id="teacherView" hidden>
-    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabNew" type="button" class="pick">New students</button><button id="tabRoster" type="button" class="pick">Manage class lists</button><button id="tDemo" type="button" class="pick">Demo</button></div>
+    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabNew" type="button" class="pick">New students</button><button id="tabRoster" type="button" class="pick">Manage class lists</button><button id="tabExport" type="button" class="pick">Export</button><button id="tDemo" type="button" class="pick">Demo</button></div>
     <div id="tCodePane">
     <h2>Start code</h2>
     <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
@@ -142,6 +143,18 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <p class="note">A new code stops the old one working straight away, on every laptop.</p>
     <h2>Latest results</h2>
     <div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Net wpm</td><td>Accuracy</td><td>Time typed</td><td>Saved</td></tr></thead><tbody id="tResults"><tr><td colspan="6" class="note">No results yet.</td></tr></tbody></table></div>
+    </div>
+    <div id="tExportPane" hidden>
+      <h2>Export all data</h2>
+      <p>Downloads one Excel file with everything saved so far:</p>
+      <ul>
+        <li><b>Summary</b>: one row per student on the class lists, with their number of tests and average, best and latest words per minute.</li>
+        <li><b>All tests</b>: one row per saved test, with every result.</li>
+        <li><b>Words</b>: every word typed, compared with the word it should have been.</li>
+        <li><b>Keystrokes</b>: every key pressed, compared with the key expected, for finding problem letters.</li>
+      </ul>
+      <p><button id="exportGo" type="button" class="bigbtn">Download all data</button></p>
+      <p id="exportMsg" class="status"></p>
     </div>
     <div id="tNewPane" hidden>
       <h2>New students</h2>
@@ -954,6 +967,8 @@ function showTab(which) {
   $("tClassPane").hidden = which !== "classes";
   $("tRosterPane").hidden = which !== "roster";
   $("tNewPane").hidden = which !== "new";
+  $("tExportPane").hidden = which !== "export";
+  $("tabExport").classList.toggle("picked", which === "export");
   $("tabNew").classList.toggle("picked", which === "new");
   if (which === "new") renderNewStudents();
   $("tabCode").classList.toggle("picked", which === "code");
@@ -966,6 +981,69 @@ $("tabCode").addEventListener("click", () => showTab("code"));
 $("tabClasses").addEventListener("click", () => showTab("classes"));
 $("tabRoster").addEventListener("click", () => showTab("roster"));
 $("tabNew").addEventListener("click", () => showTab("new"));
+$("tabExport").addEventListener("click", () => showTab("export"));
+
+// ---- Teacher console: export everything as one Excel file ----
+$("exportGo").addEventListener("click", async () => {
+  const msg = (cls, t) => { $("exportMsg").className = "status " + cls; $("exportMsg").textContent = t; };
+  msg("", "Collecting the data\u2026");
+  try {
+    await loadSheetJs();
+    const results = (await window.fb.getAllResults()).sort((a, b) => Date.parse(a.finishedAt) - Date.parse(b.finishedAt));
+    const local = iso => { const d = new Date(iso); return { date: d.toLocaleDateString(), time: d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) }; };
+    const testNo = {}; // test number per student, oldest first
+    results.forEach(r => { const k = r.className + "|" + r.studentName; testNo[k] = (testNo[k] || 0) + 1; r._n = testNo[k]; });
+
+    const allTests = results.map(r => {
+      const t = local(r.finishedAt);
+      return {
+        "Class": r.className, "Student": r.studentName, "Test number": r._n, "Date": t.date, "Time": t.time,
+        "Test length (s)": r.testLength, "Time typed (s)": r.seconds, "Stopped early": r.stoppedEarly ? "Yes" : "No",
+        "Net wpm": r.netWpm, "Gross wpm": r.grossWpm, "Accuracy %": r.accuracy,
+        "Correct words": r.correctWords, "Wrong words": r.incorrectWords,
+        "Correct letters": r.correctChars, "Wrong letters": r.incorrectChars, "Extra letters": r.extraChars, "Missed letters": r.missedChars,
+        "Mistakes fixed": r.correctedErrors, "Mistakes not fixed": r.uncorrectedErrors,
+        "Total keystrokes": r.totalKeystrokes, "Backspaces": r.backspaces
+      };
+    });
+
+    const summary = [];
+    sortClasses(Object.keys(CLASSES)).forEach(cls => CLASSES[cls].forEach(name => {
+      const res = results.filter(r => r.className === cls && r.studentName === name);
+      const w = res.map(r => r.netWpm);
+      summary.push({
+        "Class": cls, "Student": name, "Added by teacher": isAdded(cls, name) ? "Yes" : "No", "Tests": res.length,
+        "Average net wpm": res.length ? Math.round(w.reduce((a, b) => a + b, 0) / res.length) : "",
+        "Best net wpm": res.length ? Math.max(...w) : "", "Latest net wpm": res.length ? w[w.length - 1] : "",
+        "First test": res.length ? local(res[0].finishedAt).date : "", "Last test": res.length ? local(res[res.length - 1].finishedAt).date : ""
+      });
+    }));
+
+    const words = [], keys = [];
+    results.forEach(r => {
+      const t = local(r.finishedAt);
+      (r.words || []).forEach((wd, i) => words.push({ "Class": r.className, "Student": r.studentName, "Test number": r._n, "Date": t.date,
+        "Word number": i + 1, "Word": wd.target, "Typed": wd.typed, "Correct": wd.correct ? "Yes" : "No", "Finished": wd.finished ? "Yes" : "No" }));
+      (r.keystrokes || []).forEach(k => keys.push({ "Class": r.className, "Student": r.studentName, "Test number": r._n, "Date": t.date,
+        "Time (ms)": k.t, "Type": k.type, "Key pressed": k.type === "backspace" ? "Backspace" : k.type === "space" ? "Space" : k.key,
+        "Key expected": k.type === "backspace" ? "" : k.expected === " " ? "Space" : (k.expected || ""),
+        "Correct": k.type === "backspace" ? "" : (k.correct ? "Yes" : "No"), "Word number": (k.word ?? 0) + 1 }));
+    });
+
+    const wb = XLSX.utils.book_new();
+    const add = (rows, name, empty) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ "": empty }]), name);
+    add(summary, "Summary", "No class lists loaded.");
+    add(allTests, "All tests", "No tests saved yet.");
+    add(words, "Words", "No tests saved yet.");
+    add(keys, "Keystrokes", "No tests saved yet.");
+    const d = new Date(), day = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    XLSX.writeFile(wb, "Typing test data - " + day + ".xlsx");
+    msg("loaded", "\u2713 Downloaded: " + results.length + " tests from " + new Set(results.map(r => r.className + "|" + r.studentName)).size + " students.");
+  } catch (e) {
+    console.error(e);
+    msg("none", "Couldn't export. Check the internet, then try again.");
+  }
+});
 
 // ---- Teacher console: adding students by hand ----
 function resetAddForm() {
@@ -1453,6 +1531,9 @@ window.fb = {
       await b.commit();
     }
     return count;
+  },
+  async getAllResults() {
+    return (await withTimeout(getDocs(collection(db, "results")))).docs.map(d => d.data());
   },
   watchResults(cb) {
     return onSnapshot(query(collection(db, "results"), orderBy("savedAt", "desc"), limit(20)),
