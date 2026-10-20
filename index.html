@@ -68,6 +68,16 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .st-now { color:var(--cur); font-weight:bold; }
 .st-done { color:var(--ok); font-weight:bold; }
 .st-none { color:var(--muted); }
+.cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px; margin:8px 0 16px; }
+.card { text-align:left; padding:12px 14px; border:2px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); cursor:pointer; }
+.card .cname { display:block; font-size:24px; font-weight:bold; }
+.card .ccount { display:block; font-size:14px; color:var(--muted); }
+.card.picked { border-color:var(--cur); outline:2px solid var(--cur); }
+.namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
+#tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
+#tClassTable tr.notyet td:first-child { border-left:6px solid var(--line); }
+#tClassTable tr.now td:first-child { border-left:6px solid var(--cur); }
+#tClassTable tr.notyet td { color:var(--muted); }
 #tClassTable tr.stu { cursor:pointer; }
 #tClassTable tr.stu:hover td, #tClassTable tr.stu.sel td { background:var(--badbg); }
 #tClassTable thead td, #tStudentDetail thead td { font-weight:bold; }
@@ -777,6 +787,13 @@ function escHtml(t) { return String(t).replace(/[&<>"]/g, c => ({ "&":"&amp;", "
 const NOW_WINDOW_MS = 15 * 60 * 1000; // activity in the last 15 minutes counts as "testing now"
 let stopClassWatch = null, tClass = null, tStudent = null, classData = { results:[], sessions:[] }, classTicker = null;
 
+// A grid of class cards: name and number of students. Used on the upload preview and the Classes page.
+function classCards(classes, picked, attr) {
+  return '<div class="cards">' + sortClasses(Object.keys(classes)).map(c =>
+    '<button type="button" class="card' + (c === picked ? " picked" : "") + '" ' + attr + '="' + escHtml(c) + '"><span class="cname">' + escHtml(c) +
+    '</span><span class="ccount">' + classes[c].length + " students</span></button>").join("") + "</div>";
+}
+
 function showTab(which) {
   $("tCodePane").hidden = which !== "code";
   $("tClassPane").hidden = which !== "classes";
@@ -800,7 +817,23 @@ function renderRosterCurrent() {
   $("rosterCurrent").textContent = "Currently loaded: " + count + " students in " + n + " classes." + when;
 }
 
-let pendingRoster = null;
+let pendingRoster = null, previewWarnings = [], previewClass = null;
+function renderRosterPreview() {
+  const list = Object.keys(pendingRoster);
+  const count = list.reduce((a, c) => a + pendingRoster[c].length, 0);
+  $("rosterPreview").innerHTML =
+    "<p><b>" + count + " students in " + list.length + " classes.</b> Click a class to see its students.</p>" +
+    classCards(pendingRoster, previewClass, "data-pclass") +
+    (previewClass ? "<h3>" + escHtml(previewClass) + "</h3><ol class=\"namelist\">" + pendingRoster[previewClass].map(n => "<li>" + escHtml(n) + "</li>").join("") + "</ol>" : "") +
+    (previewWarnings.length ? '<p class="err">Please check:</p><ul>' + previewWarnings.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "") +
+    "<p class=\"note\">Replacing the class lists does not delete any saved results.</p>";
+}
+$("rosterPreview").addEventListener("click", e => {
+  const b = e.target.closest("[data-pclass]");
+  if (!b) return;
+  previewClass = previewClass === b.dataset.pclass ? null : b.dataset.pclass;
+  renderRosterPreview();
+});
 function loadSheetJs() {
   if (window.XLSX) return Promise.resolve();
   return new Promise((res, rej) => {
@@ -824,7 +857,7 @@ function parseRoster(wb) {
   const col = names => head.findIndex(c => names.includes(c));
   const ci = col(["class"]), fi = col(["first name", "firstname", "first"]), li = col(["last name", "lastname", "surname", "last", "family name"]), ni = col(["name", "full name", "student", "student name"]);
   if (fi < 0 && ni < 0) throw new Error("Couldn't find a \u201cFirst name\u201d column (or a \u201cName\u201d column).");
-  const classes = {}, warnings = [], seen = {}, where = {};
+  const classes = {}, warnings = [], seen = {};
   rows.slice(hi + 1).forEach((r, k) => {
     const rowNo = hi + k + 2;
     const cls = tidy(r[ci]);
@@ -836,13 +869,10 @@ function parseRoster(wb) {
     if (seen[key]) return warnings.push("Row " + rowNo + ": " + nm + " is listed twice in " + cls + ", so was added once.");
     seen[key] = true;
     (classes[cls] = classes[cls] || []).push(nm);
-    (where[nm.toLowerCase()] = where[nm.toLowerCase()] || []).push(cls);
   });
   Object.values(classes).forEach(l => l.sort((a, b) => a.localeCompare(b)));
-  const notes = Object.entries(where).filter(([, c]) => c.length > 1)
-    .map(([n, c]) => classes[c[0]].find(x => x.toLowerCase() === n) + " appears in " + c.join(" and ") + ". Fine if they are different students.");
   if (!Object.keys(classes).length) throw new Error("No students found under the \u201cClass\u201d column.");
-  return { sheet: name, classes, warnings, notes };
+  return { sheet: name, classes, warnings };
 }
 
 $("rosterFile").addEventListener("change", async () => {
@@ -857,14 +887,9 @@ $("rosterFile").addEventListener("change", async () => {
     const wb = XLSX.read(await f.arrayBuffer(), { type:"array" });
     const r = parseRoster(wb);
     pendingRoster = r.classes;
-    const list = sortClasses(Object.keys(r.classes));
-    const count = list.reduce((a, c) => a + r.classes[c].length, 0);
-    $("rosterPreview").innerHTML =
-      "<p><b>" + count + " students in " + list.length + " classes</b> (from the sheet \u201c" + escHtml(r.sheet) + "\u201d):</p>" +
-      "<p>" + list.map(c => escHtml(c) + " (" + r.classes[c].length + ")").join(", ") + "</p>" +
-      (r.warnings.length ? '<p class="err">Please check:</p><ul>' + r.warnings.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "") +
-      (r.notes.length ? '<p class="note">Names in more than one class:</p><ul class="note">' + r.notes.map(w => "<li>" + escHtml(w) + "</li>").join("") + "</ul>" : "") +
-      "<p>Replacing the class lists does not delete any saved results.</p>";
+    previewWarnings = r.warnings;
+    previewClass = null;
+    renderRosterPreview();
     $("rosterSave").hidden = false;
   } catch (e) {
     console.error(e);
@@ -892,11 +917,7 @@ $("rosterSave").addEventListener("click", async () => {
 
 function renderTeacherClassList() {
   if (!Object.keys(CLASSES).length) { $("tClassList").innerHTML = '<p class="note">No class lists loaded yet. Upload one in the Class lists tab.</p>'; return; }
-  const grades = {};
-  sortClasses(Object.keys(CLASSES)).forEach(c => (grades[c[0]] = grades[c[0]] || []).push(c));
-  $("tClassList").innerHTML = Object.values(grades).map(list =>
-    '<div class="grade">' + list.map(c =>
-      '<button type="button" class="pick' + (c === tClass ? " picked" : "") + '" data-tclass="' + c + '">' + c + "</button>").join("") + "</div>").join("");
+  $("tClassList").innerHTML = classCards(CLASSES, tClass, "data-tclass");
 }
 $("tClassList").addEventListener("click", e => {
   const b = e.target.closest("[data-tclass]");
@@ -923,23 +944,23 @@ function renderClassDetail() {
     const ses = classData.sessions.filter(x => x.studentName === name);
     const lastActive = Math.max(0, ...res.map(r => toMs(r.finishedAt)), ...ses.map(x => toMs(x.startedAt)));
     const today = res.filter(r => isToday(toMs(r.finishedAt)));
-    let status, cls;
-    if (lastActive && now - lastActive < NOW_WINDOW_MS) { status = "Testing now"; cls = "st-now"; }
-    else if (today.length) { status = "Finished today"; cls = "st-done"; }
-    else { status = "Not started today"; cls = "st-none"; }
+    let status, cls, row;
+    if (lastActive && now - lastActive < NOW_WINDOW_MS) { status = "Testing now"; cls = "st-now"; row = "now"; }
+    else if (res.length) { status = "\u2713 Done"; cls = "st-done"; row = "done"; }
+    else { status = "Not done yet"; cls = "st-none"; row = "notyet"; }
     const latest = res[res.length - 1];
     const best = res.length ? Math.max(...res.map(r => r.netWpm)) : null;
-    return { name, status, cls, todayCount: today.length, total: res.length, latest, best };
+    return { name, status, cls, row, todayCount: today.length, total: res.length, latest, best };
   });
-  const counts = { now: rows.filter(r => r.cls === "st-now").length, done: rows.filter(r => r.cls === "st-done").length };
+  const counts = { now: rows.filter(r => r.row === "now").length, done: rows.filter(r => r.row === "done").length };
   $("tClassDetail").innerHTML =
     "<h2>Class " + tClass + "</h2>" +
-    '<p>' + counts.now + " testing now \u00b7 " + counts.done + " finished today \u00b7 " + (rows.length - counts.now - counts.done) + " not started today</p>" +
-    '<div style="overflow-x:auto"><table id="tClassTable"><thead><tr><td>Student</td><td>Today</td><td>Tests today</td><td>Tests in total</td><td>Latest wpm</td><td>Best wpm</td><td>Last test</td></tr></thead><tbody>' +
-    rows.map(r => '<tr class="stu' + (r.name === tStudent ? " sel" : "") + '" data-stu="' + escHtml(r.name) + '"><td>' + escHtml(r.name) + '</td><td class="' + r.cls + '">' + r.status +
+    '<p>' + counts.now + " testing now \u00b7 " + counts.done + " done \u00b7 " + (rows.length - counts.now - counts.done) + " not done yet</p>" +
+    '<div style="overflow-x:auto"><table id="tClassTable"><thead><tr><td>Student</td><td>Status</td><td>Tests today</td><td>Tests in total</td><td>Latest wpm</td><td>Best wpm</td><td>Last test</td></tr></thead><tbody>' +
+    rows.map(r => '<tr class="stu ' + r.row + (r.name === tStudent ? " sel" : "") + '" data-stu="' + escHtml(r.name) + '"><td>' + escHtml(r.name) + '</td><td class="' + r.cls + '">' + r.status +
       "</td><td>" + r.todayCount + "</td><td>" + r.total + "</td><td>" + (r.latest ? r.latest.netWpm : "\u2013") + "</td><td>" + (r.best !== null ? r.best : "\u2013") +
       "</td><td>" + (r.latest ? shortDate(toMs(r.latest.finishedAt)) : "\u2013") + "</td></tr>").join("") +
-    "</tbody></table></div><p class=\"note\">Click a student to see all their tests. \u201cTesting now\u201d means they entered the code or finished a test in the last 15 minutes.</p>";
+    "</tbody></table></div><p class=\"note\">Click a student to see all their tests. \u201cDone\u201d means at least one saved test. \u201cTesting now\u201d means they started or finished a test in the last 15 minutes.</p>";
 }
 $("tClassDetail").addEventListener("click", e => {
   const tr = e.target.closest("tr.stu");
