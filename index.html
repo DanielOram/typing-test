@@ -63,6 +63,7 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .role { display:inline-block; font-size:16px; font-weight:bold; padding:4px 12px; border-radius:4px; margin:0 0 12px; }
 .role.teacher { background:var(--fg); color:var(--bg); }
 .role.student { background:var(--barnew); color:#ffffff; }
+.role.demo { background:var(--warn); color:#ffffff; }
 /* Teacher console: class overview */
 .tabs { display:flex; gap:8px; flex-wrap:wrap; }
 .st-now { color:var(--cur); font-weight:bold; }
@@ -105,6 +106,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
 <main>
   <h1>Typing Test</h1>
   <p id="role" class="role" hidden></p>
+  <p id="demoBar" hidden><button id="exitDemo" type="button">Exit demo</button> <span class="note">Back to the teacher console. Nothing in the demo is saved.</span></p>
   <p id="net" class="net connecting"><span class="dot"></span> <span id="netText">Connecting to the database…</span></p>
 
   <section id="homeView">
@@ -124,12 +126,12 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
 
   <section id="teacherView" hidden>
-    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabRoster" type="button" class="pick">Manage class lists</button></div>
+    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button><button id="tabRoster" type="button" class="pick">Manage class lists</button><button id="tDemo" type="button" class="pick">Demo</button></div>
     <div id="tCodePane">
     <h2>Start code</h2>
     <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
-    <div class="code" id="tCode">----</div>
-    <p><button id="newCode" type="button">Generate new code</button> <span id="tCodeMsg" class="note"></span></p>
+    <div class="code" id="tCode">••••</div>
+    <p><button id="toggleCode" type="button">Show code</button> <button id="newCode" type="button">Generate new code</button> <span id="tCodeMsg" class="note"></span></p>
     <p class="note">A new code stops the old one working straight away, on every laptop.</p>
     <h2>Latest results</h2>
     <div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Net wpm</td><td>Accuracy</td><td>Time typed</td><td>Saved</td></tr></thead><tbody id="tResults"><tr><td colspan="6" class="note">No results yet.</td></tr></tbody></table></div>
@@ -478,12 +480,14 @@ function showSaveState(r) {
   const el = $("rSave");
   if (st === "saving") el.innerHTML = "Saving your result…";
   else if (st === "saved") el.innerHTML = "Saved.";
+  else if (st === "demo") el.innerHTML = "Demo: not saved.";
   else if (st === "failed") el.innerHTML = '<span class="err">Not saved. Check the internet, then </span><button type="button" id="retrySave">Try again</button>';
   else el.textContent = "";
   const b = $("retrySave");
   if (b) b.addEventListener("click", () => saveResult(r));
 }
 async function saveResult(r) {
+  if (demo) { saveState.set(r, "demo"); if (history[selectedIndex] === r) showSaveState(r); return; }
   saveState.set(r, "saving");
   if (history[selectedIndex] === r) showSaveState(r);
   try {
@@ -737,6 +741,7 @@ $("go").addEventListener("click", async () => {
   if (!pickedClass || !pickedName) return;
   const code = approvedCode;
   approvedCode = null;
+  if (demo) { sessionId = null; enterTest(); return; }
   if (code && window.fb) {
     try {
       sessionId = await window.fb.startSession(code, pickedName, pickedClass);
@@ -755,6 +760,12 @@ async function checkStudentCode() {
   const fail = msg => { $("cErr").textContent = msg; $("cInput").value = ""; $("cInput").focus(); };
   if (!/^\d{4}$/.test(v)) return fail("The code is 4 numbers. Ask your teacher.");
   if (!window.fb) return fail("Can't connect. Check the internet, then try again.");
+  if (demo) {
+    $("cErr").textContent = "";
+    if (codeMode === "start") enterTest();
+    else { approvedCode = "demo"; showView("startView"); showStudentPicker(); }
+    return;
+  }
   checking = true;
   $("cErr").textContent = "Checking\u2026";
   try {
@@ -808,6 +819,7 @@ async function confirmChange() {
   const v = $("chInput").value.trim();
   const fail = msg => { $("chErr").textContent = msg; $("chInput").value = ""; $("chInput").focus(); };
   if (!/^\d{4}$/.test(v)) return fail("The code is 4 numbers.");
+  if (demo) { approvedCode = "demo"; $("changePanel").hidden = true; leaveForStudentPicker(); return; }
   if (!window.fb) return fail("Can't connect. Check the internet, then try again.");
   changing = true;
   $("chErr").textContent = "Checking\u2026";
@@ -859,12 +871,16 @@ const VIEWS = ["homeView", "teacherLogin", "teacherView", "startView", "codeView
 let stopCodeWatch = null, stopResultsWatch = null;
 
 const TEACHER_VIEWS = ["teacherLogin", "teacherView"], STUDENT_VIEWS = ["startView", "codeView", "appView"];
+let demo = false;          // teacher's demo: pretend student, nothing saved
+let realClasses = null;   // the real class lists, put back when the demo ends
 function showView(id) {
   VIEWS.forEach(v => { $(v).hidden = v !== id; });
-  const role = TEACHER_VIEWS.includes(id) ? "teacher" : STUDENT_VIEWS.includes(id) ? "student" : "";
+  let role = TEACHER_VIEWS.includes(id) ? "teacher" : STUDENT_VIEWS.includes(id) ? "student" : "";
+  if (demo && role === "student") role = "demo";
   $("role").hidden = !role;
   $("role").className = "role " + role;
-  $("role").textContent = role === "teacher" ? "Teacher console" : "Student";
+  $("role").textContent = role === "teacher" ? "Teacher console" : role === "demo" ? "Student demo: not saved" : "Student";
+  $("demoBar").hidden = !demo;
   updateAway();
 }
 
@@ -1082,13 +1098,48 @@ function renderStudentDetail() {
   const w = $("sChartWrap"); w.scrollLeft = w.scrollWidth;
 }
 
+// The start code is hidden unless the teacher chooses to show it (the teacher screen may be on the board).
+let lastCode = null, codeVisible = false;
+function renderCode() {
+  $("tCode").textContent = !lastCode ? "----" : codeVisible ? lastCode : "\u2022\u2022\u2022\u2022";
+  $("toggleCode").textContent = codeVisible ? "Hide code" : "Show code";
+}
+function hideCode() { codeVisible = false; renderCode(); }
+$("toggleCode").addEventListener("click", () => { codeVisible = !codeVisible; renderCode(); });
+
+// ---- Demo: the full student journey with a pretend student. Nothing is saved. ----
+$("tDemo").addEventListener("click", () => {
+  demo = true;
+  hideCode();
+  realClasses = CLASSES;
+  CLASSES = { "Demo": ["Demo Student"] };
+  delete histories["Demo|Demo Student"]; // fresh chart every demo
+  pickedClass = null; pickedName = null; approvedCode = null;
+  openCodeScreen("unlock", "Demo: type any 4 numbers.");
+});
+function exitDemo() {
+  if (s && s.timerId) clearInterval(s.timerId);
+  s = null;
+  demo = false;
+  if (realClasses) CLASSES = realClasses;
+  realClasses = null;
+  pickedClass = null; pickedName = null; approvedCode = null;
+  $("changePanel").hidden = true;
+  showView("teacherView");
+  showTab("code");
+  hideCode();
+}
+$("exitDemo").addEventListener("click", exitDemo);
+
 function openTeacherView() {
   showView("teacherView");
   showTab("code");
   loadRoster().then(() => { if (!$("tRosterPane").hidden) renderRosterCurrent(); if (!$("tClassPane").hidden) renderTeacherClassList(); })
     .catch(e => console.error("Couldn't load class lists", e));
+  hideCode();
   stopCodeWatch = window.fb.watchCode(code => {
-    $("tCode").textContent = code || "----";
+    lastCode = code;
+    renderCode();
     if (!code) $("tCodeMsg").textContent = "No code yet. Click Generate new code.";
   });
   stopResultsWatch = window.fb.watchResults(rows => {
@@ -1131,6 +1182,7 @@ $("asTeacher").addEventListener("click", () => {
 
 // Back / Sign out: return to the teacher-or-student question. Leaving the teacher screen signs the teacher out.
 document.querySelectorAll(".home").forEach(b => b.addEventListener("click", async () => {
+  if (demo) { exitDemo(); return; }
   const wasTeacherView = !$("teacherView").hidden;
   if (stopCodeWatch) { stopCodeWatch(); stopCodeWatch = null; }
   if (stopResultsWatch) { stopResultsWatch(); stopResultsWatch = null; }
@@ -1138,7 +1190,7 @@ document.querySelectorAll(".home").forEach(b => b.addEventListener("click", asyn
   if (classTicker) { clearInterval(classTicker); classTicker = null; }
   tClass = null; tStudent = null;
   $("tClassDetail").innerHTML = ""; $("tStudentDetail").innerHTML = "";
-  $("tCode").textContent = "----";
+  lastCode = null; hideCode();
   $("tCodeMsg").textContent = "";
   if (wasTeacherView && window.fb) await window.fb.teacherSignOut();
   showView("homeView");
