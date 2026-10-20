@@ -82,6 +82,9 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .proof button { font-size:22px; padding:14px 24px; font-weight:bold; }
 .danger { margin-top:40px; border-top:3px solid var(--bad); padding-top:8px; }
 .redbtn { background:var(--bad); color:#ffffff; border:none; border-radius:6px; font-weight:bold; }
+/* "Do another test" on the results screen: big and green so it's easy to spot */
+#restart.again { background:#1a7f37; color:#ffffff; border:none; border-radius:8px; font-size:24px; font-weight:bold; padding:14px 28px; }
+#restart.again:hover { background:#156a2d; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -300,6 +303,7 @@ function newTest() {
   $("testView").hidden = false;
   $("resultView").hidden = true;
   $("restart").textContent = "Restart test";
+  $("restart").classList.remove("again");
   box.scrollTop = 0; // must happen after the box is visible
   box.focus();
   updateAway();
@@ -552,7 +556,8 @@ function showResults() {
   renderChart(); // after the results are visible, so it can scroll to the newest bar
   renderProof();
   showStats(history.length - 1);
-  $("restart").textContent = "Do another test";
+  $("restart").textContent = "\u21bb Do another test";
+  $("restart").classList.add("again");
   if (document.activeElement) document.activeElement.blur();
   updateAway();
 }
