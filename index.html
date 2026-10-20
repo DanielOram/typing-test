@@ -59,6 +59,18 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 #nameList .pick { text-align:left; }
 .pick.picked { outline:4px solid var(--cur); font-weight:bold; }
 .note { color:var(--muted); }
+/* Role strip: tells teacher screens and student screens apart at a glance */
+.role { display:inline-block; font-size:16px; font-weight:bold; padding:4px 12px; border-radius:4px; margin:0 0 12px; }
+.role.teacher { background:var(--fg); color:var(--bg); }
+.role.student { background:var(--barnew); color:#ffffff; }
+/* Teacher console: class overview */
+.tabs { display:flex; gap:8px; flex-wrap:wrap; }
+.st-now { color:var(--cur); font-weight:bold; }
+.st-done { color:var(--ok); font-weight:bold; }
+.st-none { color:var(--muted); }
+#tClassTable tr.stu { cursor:pointer; }
+#tClassTable tr.stu:hover td, #tClassTable tr.stu.sel td { background:var(--badbg); }
+#tClassTable thead td, #tStudentDetail thead td { font-weight:bold; }
 /* Database connection status, shown on every screen */
 .net { font-size:14px; margin:-8px 0 12px; display:flex; align-items:center; gap:6px; }
 .net .dot { width:10px; height:10px; border-radius:50%; background:var(--muted); display:inline-block; }
@@ -76,6 +88,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
 
 <main>
   <h1>Typing Test</h1>
+  <p id="role" class="role" hidden></p>
   <p id="net" class="net connecting"><span class="dot"></span> <span id="netText">Connecting to the database…</span></p>
 
   <section id="homeView">
@@ -95,6 +108,8 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
 
   <section id="teacherView" hidden>
+    <div class="tabs"><button id="tabCode" type="button" class="pick picked">Start code</button><button id="tabClasses" type="button" class="pick">Classes</button></div>
+    <div id="tCodePane">
     <h2>Start code</h2>
     <p>When a student puts their hand up, type this code on their laptop to let them start.</p>
     <div class="code" id="tCode">----</div>
@@ -102,6 +117,13 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <p class="note">A new code stops the old one working straight away, on every laptop.</p>
     <h2>Latest results</h2>
     <div style="overflow-x:auto"><table><thead><tr><td>Student</td><td>Class</td><td>Net wpm</td><td>Accuracy</td><td>Time typed</td><td>Saved</td></tr></thead><tbody id="tResults"><tr><td colspan="6" class="note">No results yet.</td></tr></tbody></table></div>
+    </div>
+    <div id="tClassPane" hidden>
+      <h2>Choose a class</h2>
+      <div id="tClassList"></div>
+      <div id="tClassDetail"></div>
+      <div id="tStudentDetail"></div>
+    </div>
     <p><button class="home" type="button">Sign out</button></p>
   </section>
 
@@ -689,15 +711,110 @@ setTimeout(() => { if (!(window.fb && window.fb.ready())) setNet(navigator.onLin
 const VIEWS = ["homeView", "teacherLogin", "teacherView", "startView", "codeView", "appView"];
 let stopCodeWatch = null, stopResultsWatch = null;
 
+const TEACHER_VIEWS = ["teacherLogin", "teacherView"], STUDENT_VIEWS = ["startView", "codeView", "appView"];
 function showView(id) {
   VIEWS.forEach(v => { $(v).hidden = v !== id; });
+  const role = TEACHER_VIEWS.includes(id) ? "teacher" : STUDENT_VIEWS.includes(id) ? "student" : "";
+  $("role").hidden = !role;
+  $("role").className = "role " + role;
+  $("role").textContent = role === "teacher" ? "Teacher console" : "Student";
   updateAway();
 }
 
 function escHtml(t) { return String(t).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[c]); }
 
+// ---- Teacher console: Classes page ----
+const NOW_WINDOW_MS = 15 * 60 * 1000; // activity in the last 15 minutes counts as "testing now"
+let stopClassWatch = null, tClass = null, tStudent = null, classData = { results:[], sessions:[] }, classTicker = null;
+
+function showTab(which) {
+  $("tCodePane").hidden = which !== "code";
+  $("tClassPane").hidden = which !== "classes";
+  $("tabCode").classList.toggle("picked", which === "code");
+  $("tabClasses").classList.toggle("picked", which === "classes");
+  if (which === "classes") renderTeacherClassList();
+}
+$("tabCode").addEventListener("click", () => showTab("code"));
+$("tabClasses").addEventListener("click", () => showTab("classes"));
+
+function renderTeacherClassList() {
+  const grades = {};
+  Object.keys(CLASSES).forEach(c => (grades[c[0]] = grades[c[0]] || []).push(c));
+  $("tClassList").innerHTML = Object.values(grades).map(list =>
+    '<div class="grade">' + list.map(c =>
+      '<button type="button" class="pick' + (c === tClass ? " picked" : "") + '" data-tclass="' + c + '">' + c + "</button>").join("") + "</div>").join("");
+}
+$("tClassList").addEventListener("click", e => {
+  const b = e.target.closest("[data-tclass]");
+  if (!b) return;
+  tClass = b.dataset.tclass;
+  tStudent = null;
+  renderTeacherClassList();
+  if (stopClassWatch) stopClassWatch();
+  $("tClassDetail").innerHTML = '<p class="note">Loading ' + tClass + "\u2026</p>";
+  $("tStudentDetail").innerHTML = "";
+  stopClassWatch = window.fb.watchClass(tClass, data => { classData = data; renderClassDetail(); renderStudentDetail(); });
+  if (!classTicker) classTicker = setInterval(renderClassDetail, 60000); // keep "testing now" up to date
+});
+
+const toMs = t => (t && t.toMillis) ? t.toMillis() : (typeof t === "string" ? Date.parse(t) : 0);
+const isToday = t => t && new Date(t).toDateString() === new Date().toDateString();
+const shortDate = t => new Date(t).toLocaleString(undefined, { weekday:"short", day:"numeric", month:"short", hour:"numeric", minute:"2-digit" });
+
+function renderClassDetail() {
+  if (!tClass) return;
+  const now = Date.now();
+  const rows = CLASSES[tClass].map(name => {
+    const res = classData.results.filter(r => r.studentName === name).sort((a, b) => toMs(a.finishedAt) - toMs(b.finishedAt));
+    const ses = classData.sessions.filter(x => x.studentName === name);
+    const lastActive = Math.max(0, ...res.map(r => toMs(r.finishedAt)), ...ses.map(x => toMs(x.startedAt)));
+    const today = res.filter(r => isToday(toMs(r.finishedAt)));
+    let status, cls;
+    if (lastActive && now - lastActive < NOW_WINDOW_MS) { status = "Testing now"; cls = "st-now"; }
+    else if (today.length) { status = "Finished today"; cls = "st-done"; }
+    else { status = "Not started today"; cls = "st-none"; }
+    const latest = res[res.length - 1];
+    const best = res.length ? Math.max(...res.map(r => r.netWpm)) : null;
+    return { name, status, cls, todayCount: today.length, total: res.length, latest, best };
+  });
+  const counts = { now: rows.filter(r => r.cls === "st-now").length, done: rows.filter(r => r.cls === "st-done").length };
+  $("tClassDetail").innerHTML =
+    "<h2>Class " + tClass + "</h2>" +
+    '<p>' + counts.now + " testing now \u00b7 " + counts.done + " finished today \u00b7 " + (rows.length - counts.now - counts.done) + " not started today</p>" +
+    '<div style="overflow-x:auto"><table id="tClassTable"><thead><tr><td>Student</td><td>Today</td><td>Tests today</td><td>Tests in total</td><td>Latest wpm</td><td>Best wpm</td><td>Last test</td></tr></thead><tbody>' +
+    rows.map(r => '<tr class="stu' + (r.name === tStudent ? " sel" : "") + '" data-stu="' + escHtml(r.name) + '"><td>' + escHtml(r.name) + '</td><td class="' + r.cls + '">' + r.status +
+      "</td><td>" + r.todayCount + "</td><td>" + r.total + "</td><td>" + (r.latest ? r.latest.netWpm : "\u2013") + "</td><td>" + (r.best !== null ? r.best : "\u2013") +
+      "</td><td>" + (r.latest ? shortDate(toMs(r.latest.finishedAt)) : "\u2013") + "</td></tr>").join("") +
+    "</tbody></table></div><p class=\"note\">Click a student to see all their tests. \u201cTesting now\u201d means they entered the code or finished a test in the last 15 minutes.</p>";
+}
+$("tClassDetail").addEventListener("click", e => {
+  const tr = e.target.closest("tr.stu");
+  if (!tr) return;
+  tStudent = tr.dataset.stu;
+  renderClassDetail();
+  renderStudentDetail();
+  $("tStudentDetail").scrollIntoView({ behavior:"smooth", block:"start" });
+});
+
+function renderStudentDetail() {
+  if (!tStudent) { $("tStudentDetail").innerHTML = ""; return; }
+  const res = classData.results.filter(r => r.studentName === tStudent).sort((a, b) => toMs(a.finishedAt) - toMs(b.finishedAt));
+  if (!res.length) { $("tStudentDetail").innerHTML = "<h2>" + escHtml(tStudent) + "</h2><p class=\"note\">No tests yet.</p>"; return; }
+  const top = Math.max(1, ...res.map(r => r.netWpm));
+  $("tStudentDetail").innerHTML = "<h2>" + escHtml(tStudent) + " \u00b7 Class " + tClass + "</h2>" +
+    '<div id="sChartWrap" style="overflow-x:auto;margin:16px 0"><div style="display:flex;gap:12px;align-items:flex-end;min-height:180px">' +
+    res.map((r, i) => '<div class="col" style="cursor:default"><div class="val">' + r.netWpm + '</div><div class="bar" style="height:' +
+      Math.max(2, Math.round(r.netWpm / top * 140)) + 'px"></div><div class="tlabel">Test ' + (i + 1) + "</div></div>").join("") + "</div></div>" +
+    '<div style="overflow-x:auto"><table><thead><tr><td>Test</td><td>Date and time</td><td>Net wpm</td><td>Gross wpm</td><td>Accuracy</td><td>Time typed</td></tr></thead><tbody>' +
+    res.map((r, i) => "<tr><td>" + (i + 1) + "</td><td>" + shortDate(toMs(r.finishedAt)) + "</td><td>" + r.netWpm + "</td><td>" + r.grossWpm +
+      "</td><td>" + r.accuracy + "%</td><td>" + fmtLong(r.seconds) + (r.stoppedEarly ? " (stopped)" : "") + "</td></tr>").join("") +
+    "</tbody></table></div>";
+  const w = $("sChartWrap"); w.scrollLeft = w.scrollWidth;
+}
+
 function openTeacherView() {
   showView("teacherView");
+  showTab("code");
   stopCodeWatch = window.fb.watchCode(code => {
     $("tCode").textContent = code || "----";
     if (!code) $("tCodeMsg").textContent = "No code yet. Click Generate new code.";
@@ -746,6 +863,10 @@ document.querySelectorAll(".home").forEach(b => b.addEventListener("click", asyn
   const wasTeacherView = !$("teacherView").hidden;
   if (stopCodeWatch) { stopCodeWatch(); stopCodeWatch = null; }
   if (stopResultsWatch) { stopResultsWatch(); stopResultsWatch = null; }
+  if (stopClassWatch) { stopClassWatch(); stopClassWatch = null; }
+  if (classTicker) { clearInterval(classTicker); classTicker = null; }
+  tClass = null; tStudent = null;
+  $("tClassDetail").innerHTML = ""; $("tStudentDetail").innerHTML = "";
   $("tCode").textContent = "----";
   $("tCodeMsg").textContent = "";
   if (wasTeacherView && window.fb) await window.fb.teacherSignOut();
@@ -758,7 +879,7 @@ renderClassList();
 // Firebase connection. The settings below are meant to be public; the Firestore rules protect the data.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, setDoc, addDoc, collection, onSnapshot, serverTimestamp, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8dYmDCBJN1nvaEKn8PUDb1_j3KShk3EM",
@@ -820,6 +941,16 @@ window.fb = {
   async saveResult(r, sessionId) {
     const u = await currentUser();
     await withTimeout(addDoc(collection(db, "results"), { ...r, uid: u.uid, sessionId, savedAt: serverTimestamp() }));
+  },
+  // Everything for one class: its saved results and its sessions (who entered the code), updating live.
+  watchClass(className, cb) {
+    const data = { results: [], sessions: [] };
+    const opts = { serverTimestamps: "estimate" };
+    const a = onSnapshot(query(collection(db, "results"), where("className", "==", className)),
+      s => { data.results = s.docs.map(d => d.data(opts)); cb(data); }, e => console.error(e));
+    const b = onSnapshot(query(collection(db, "sessions"), where("className", "==", className)),
+      s => { data.sessions = s.docs.map(d => d.data(opts)); cb(data); }, e => console.error(e));
+    return () => { a(); b(); };
   },
   watchResults(cb) {
     return onSnapshot(query(collection(db, "results"), orderBy("savedAt", "desc"), limit(20)),
