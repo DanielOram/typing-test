@@ -618,7 +618,16 @@ function renderProof() {
 }
 
 function saveProofPicture() {
-  const tests = fullTests();
+  drawProofPicture({
+    name: student.name, cls: student.cls, tests: fullTests(),
+    footer: demo ? "Words per minute (net) for each test this lesson" : "Words per minute (net) for each test this lesson of 30 seconds or more",
+    onSaved: filename => { const m = $("proofMsg"); if (m) m.textContent = "Saved to Downloads: " + filename; }
+  });
+}
+
+// Draws the results picture and downloads it. Used by students and by the teacher console.
+const localDay = t => { const d = new Date(t); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+function drawProofPicture({ name, cls, tests, footer, onSaved }) {
   const W = 1200, H = 800, c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
@@ -628,10 +637,10 @@ function saveProofPicture() {
 
   // Heading: who, which class, when
   g.fillStyle = "#555555"; g.font = font(26, true); g.fillText("TYPING TEST RESULTS", 60, 70);
-  g.fillStyle = "#1b1b1b"; g.font = font(54, true); g.fillText(student.name, 60, 135);
+  g.fillStyle = "#1b1b1b"; g.font = font(54, true); g.fillText(name, 60, 135);
   g.font = font(30); g.fillStyle = "#333333";
   const exported = new Date().toLocaleString(undefined, { weekday:"short", day:"numeric", month:"long", year:"numeric", hour:"numeric", minute:"2-digit" });
-  g.fillText("Class " + student.cls + "   \u00b7   Exported " + exported, 60, 182);
+  g.fillText("Class " + cls + "   \u00b7   Exported " + exported, 60, 182);
 
   // Summary: average, best, number of tests
   const avg = Math.round(tests.reduce((a, r) => a + r.netWpm, 0) / tests.length);
@@ -660,19 +669,17 @@ function saveProofPicture() {
     g.fillStyle = "#555555"; g.font = font(bw < 50 ? 14 : 20); g.fillText((bw < 50 ? "" : "Test ") + (i + 1), x + bw / 2, bottom + 30);
     g.textAlign = "left";
   });
-  g.fillStyle = "#777777"; g.font = font(18); g.fillText((demo ? "Words per minute (net) for each test this lesson" : "Words per minute (net) for each test this lesson of 30 seconds or more"), left, H - 20);
+  g.fillStyle = "#777777"; g.font = font(18); g.fillText(footer, left, H - 20);
 
   const safe = t => String(t).replace(/[\\/:*?"<>|]/g, "").trim();
-  const t = new Date(), day = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"); // laptop's own date
-  const filename = "Typing test - " + safe(student.cls) + " - " + safe(student.name) + " - " + day + ".png";
+  const filename = "Typing test - " + safe(cls) + " - " + safe(name) + " - " + localDay(Date.now()) + ".png"; // laptop's own date
   c.toBlob(blob => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
-    const m = $("proofMsg");
-    if (m) m.textContent = "Saved to Downloads: " + filename;
+    if (onSaved) onSaved(filename);
   }, "image/png");
 }
 
@@ -1282,17 +1289,31 @@ $("tClassDetail").addEventListener("click", e => {
   const tr = e.target.closest("tr.stu");
   if (!tr) return;
   tStudent = tr.dataset.stu;
+  tLessonDay = null; tPicMsg = "";
   renderClassDetail();
   renderStudentDetail();
   $("tStudentDetail").scrollIntoView({ behavior:"smooth", block:"start" });
 });
 
+let tLessonDay = null, tPicMsg = "";
+// Tests from one lesson (one day) that count towards the results picture.
+const picTests = (res, day) => res.filter(r => localDay(toMs(r.finishedAt)) === day && r.seconds >= MIN_SECONDS);
 function renderStudentDetail() {
   if (!tStudent) { $("tStudentDetail").innerHTML = ""; return; }
   const res = classData.results.filter(r => r.studentName === tStudent).sort((a, b) => toMs(a.finishedAt) - toMs(b.finishedAt));
   if (!res.length) { $("tStudentDetail").innerHTML = "<h2>" + escHtml(tStudent) + "</h2><p class=\"note\">No tests yet.</p>"; return; }
   const top = Math.max(1, ...res.map(r => r.netWpm));
-  $("tStudentDetail").innerHTML = "<h2>" + escHtml(tStudent) + " \u00b7 Class " + tClass + "</h2>" +
+  const days = [...new Set(res.map(r => localDay(toMs(r.finishedAt))))].reverse(); // newest first
+  if (!days.includes(tLessonDay)) tLessonDay = days[0];
+  const n = picTests(res, tLessonDay).length;
+  const dayLabel = d => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", day:"numeric", month:"short", year:"numeric" });
+  const picBox = '<div class="savebar" style="background:var(--bg);border-color:var(--line)"><p><b>Results picture</b> (for Toddle)</p>' +
+    '<p><label for="tLesson">Lesson: </label><select id="tLesson">' + days.map(d => '<option value="' + d + '"' + (d === tLessonDay ? " selected" : "") + ">" + dayLabel(d) + "</option>").join("") + "</select> " +
+    (n ? '<button id="tPicGo" type="button">Save results picture</button>' : "") + "</p>" +
+    '<p class="note">' + (n ? n + " test" + (n === 1 ? "" : "s") + " from this lesson will be on the picture (tests of " + MIN_SECONDS + " seconds or more)."
+      : "No tests of " + MIN_SECONDS + " seconds or more in this lesson, so there's nothing to put on a picture.") + "</p>" +
+    (tPicMsg ? '<p class="status loaded">' + escHtml(tPicMsg) + "</p>" : "") + "</div>";
+  $("tStudentDetail").innerHTML = "<h2>" + escHtml(tStudent) + " \u00b7 Class " + tClass + "</h2>" + picBox +
     '<div id="sChartWrap" style="overflow-x:auto;margin:16px 0"><div style="display:flex;gap:12px;align-items:flex-end;min-height:180px">' +
     res.map((r, i) => '<div class="col" style="cursor:default"><div class="val">' + r.netWpm + '</div><div class="bar" style="height:' +
       Math.max(2, Math.round(r.netWpm / top * 140)) + 'px"></div><div class="tlabel">Test ' + (i + 1) + "</div></div>").join("") + "</div></div>" +
@@ -1302,6 +1323,23 @@ function renderStudentDetail() {
     "</tbody></table></div>";
   const w = $("sChartWrap"); w.scrollLeft = w.scrollWidth;
 }
+$("tStudentDetail").addEventListener("change", e => {
+  if (e.target.id !== "tLesson") return;
+  tLessonDay = e.target.value; tPicMsg = "";
+  renderStudentDetail();
+});
+$("tStudentDetail").addEventListener("click", e => {
+  if (e.target.id !== "tPicGo") return;
+  const res = classData.results.filter(r => r.studentName === tStudent).sort((a, b) => toMs(a.finishedAt) - toMs(b.finishedAt));
+  const tests = picTests(res, tLessonDay);
+  if (!tests.length) return;
+  const when = new Date(tLessonDay + "T12:00:00").toLocaleDateString(undefined, { day:"numeric", month:"short", year:"numeric" });
+  drawProofPicture({
+    name: tStudent, cls: tClass, tests,
+    footer: "Words per minute (net) for each test on " + when + " of " + MIN_SECONDS + " seconds or more",
+    onSaved: filename => { tPicMsg = "\u2713 Saved to Downloads: " + filename; renderStudentDetail(); }
+  });
+});
 
 // The start code is hidden unless the teacher chooses to show it (the teacher screen may be on the board).
 let lastCode = null, codeVisible = false;
