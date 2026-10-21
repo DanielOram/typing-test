@@ -87,6 +87,8 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 #restart.again:hover { background:#156a2d; }
 .newtag { display:inline-block; font-size:12px; font-weight:bold; color:#ffffff; background:var(--warn); border-radius:4px; padding:1px 6px; margin-left:6px; vertical-align:middle; }
 .bigbtn { font-size:22px; padding:14px 24px; font-weight:bold; }
+.checkq { font-size:22px; margin:8px 0 0; }
+.checkname { font-size:44px; font-weight:bold; margin:4px 0 16px; padding:12px 16px; border:4px solid var(--cur); border-radius:8px; display:inline-block; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -228,20 +230,19 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
   </section>
 
   <section id="codeView" hidden>
-    <h2 id="cWho">Put your hand up</h2>
-    <p>Your teacher will type the code.</p>
-    <p><label for="cInput">Code: </label><input id="cInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off"> <button id="cEnter" type="button">Next</button></p>
+    <p class="checkq">Is this you?</p>
+    <p id="cWho" class="checkname"></p>
+    <p>✋ Put your hand up. Your teacher will check your name and type the code.</p>
+    <p><label for="cInput">Code: </label><input id="cInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off"> <button id="cEnter" type="button">Start</button></p>
     <p id="cErr" class="err"></p>
-    <p><button class="home" type="button">Back</button></p>
+    <p><button id="cBack" type="button">Not me: go back</button></p>
   </section>
 
   <div id="appView" hidden>
   <p id="studentBar"><span id="who"></span> <button id="change" type="button">Change student</button></p>
-  <div id="changePanel" hidden>
-    <p><b>Ask your teacher to type the code to change student.</b></p>
-    <p><label for="chInput">Code: </label><input id="chInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off">
-      <button id="chOk" type="button">Change student</button> <button id="chCancel" type="button">Cancel</button></p>
-    <p id="chErr" class="err"></p>
+  <div id="changePanel" class="savebar" hidden>
+    <p><b id="chText">Change student?</b></p>
+    <p><button id="chOk" type="button">Yes, change student</button> <button id="chCancel" type="button">Cancel</button></p>
   </div>
   <button id="restart" type="button">Restart test</button>
 
@@ -717,7 +718,7 @@ $("copyRaw").addEventListener("click", () => {
   );
 });
 
-// ---- Student flow: teacher's code first, then class, then name, then go ----
+// ---- Student flow: class, then name, then the teacher checks the name and types the code ----
 let pickedClass = null, pickedName = null;
 const sortClasses = list => list.sort((a, b) => a.localeCompare(b, undefined, { numeric:true }));
 
@@ -746,7 +747,6 @@ function showStudentPicker() {
   renderClassList(); renderNameList();
 }
 
-// Fetch the class lists. Only works on a laptop where the teacher's code has been entered.
 // The uploaded lists, plus any students the teacher added by hand (kept separately so a new upload keeps them).
 let ADDED = [];            // [{ cls, name, addedAt }]
 async function loadRoster() {
@@ -789,68 +789,50 @@ $("nameList").addEventListener("click", e => {
   renderNameList();
 });
 
-// The code screen does two jobs:
-//  "unlock": the first step for a student. A right code opens the class lists on this laptop.
-//  "start":  only if the code changed between unlocking and pressing Start. A right code starts the test.
-let codeMode = "unlock";
-let approvedCode = null; // the code the teacher just typed, used once to start the test
-
-function openCodeScreen(mode, message) {
-  codeMode = mode;
-  $("cWho").textContent = mode === "start" ? pickedName + " \u00b7 Class " + pickedClass : "Put your hand up";
+// Checkpoint: after the student picks their name, the teacher checks it and types the code.
+// The server checks the code (students' laptops can never read it) and only then starts a session.
+function openCodeScreen(message) {
+  $("cWho").textContent = pickedName + " \u00b7 Class " + pickedClass;
   $("cInput").value = "";
   $("cErr").textContent = message || "";
   showView("codeView");
   $("cInput").focus();
 }
 
-$("asStudent").addEventListener("click", () => openCodeScreen("unlock"));
-
-// Name chosen: start the test with the code the teacher already typed.
-$("go").addEventListener("click", async () => {
-  if (!pickedClass || !pickedName) return;
-  const code = approvedCode;
-  approvedCode = null;
-  if (demo) { sessionId = null; enterTest(); return; }
-  if (code && window.fb) {
-    try {
-      sessionId = await window.fb.startSession(code, pickedName, pickedClass);
-      enterTest();
-      return;
-    } catch (e) { console.error(e); }
+// Student: straight to the class and name lists.
+async function openStudentPicker() {
+  showView("startView");
+  $("noRoster").hidden = true;
+  $("rosterArea").hidden = true;
+  if (!demo) {
+    try { await loadRoster(); }
+    catch (e) { console.error(e); CLASSES = {}; $("refreshMsg").textContent = "Can't load the class lists. Check the internet, then click Refresh."; }
   }
-  openCodeScreen("start", "The code has changed. Ask your teacher.");
-});
+  showStudentPicker();
+}
+$("asStudent").addEventListener("click", () => { $("refreshMsg").textContent = ""; openStudentPicker(); });
 
-// The server checks the code (students' laptops can never read it).
+// Name chosen: go to the checkpoint.
+$("go").addEventListener("click", () => {
+  if (!pickedClass || !pickedName) return;
+  openCodeScreen(demo ? "Demo: type any 4 numbers." : "");
+});
+$("cBack").addEventListener("click", () => { showView("startView"); showStudentPicker(); });
+
 let checking = false;
 async function checkStudentCode() {
   if (checking) return;
   const v = $("cInput").value.trim();
   const fail = msg => { $("cErr").textContent = msg; $("cInput").value = ""; $("cInput").focus(); };
   if (!/^\d{4}$/.test(v)) return fail("The code is 4 numbers. Ask your teacher.");
+  if (demo) { $("cErr").textContent = ""; sessionId = null; enterTest(); return; }
   if (!window.fb) return fail("Can't connect. Check the internet, then try again.");
-  if (demo) {
-    $("cErr").textContent = "";
-    if (codeMode === "start") enterTest();
-    else { approvedCode = "demo"; showView("startView"); showStudentPicker(); }
-    return;
-  }
   checking = true;
   $("cErr").textContent = "Checking\u2026";
   try {
-    if (codeMode === "start") {
-      sessionId = await window.fb.startSession(v, pickedName, pickedClass);
-      $("cErr").textContent = "";
-      enterTest();
-    } else {
-      await window.fb.unlock(v);
-      approvedCode = v;
-      await loadRoster();
-      $("cErr").textContent = "";
-      showView("startView");
-      showStudentPicker();
-    }
+    sessionId = await window.fb.startSession(v, pickedName, pickedClass);
+    $("cErr").textContent = "";
+    enterTest();
   } catch (e) {
     console.error(e);
     fail(e.code === "permission-denied" ? "That code is not right. Ask your teacher." : "Can't connect. Check the internet, then try again.");
@@ -871,43 +853,21 @@ function enterTest() {
   else newTest();
 }
 
-// Change student: needs the teacher's code first, so a mis-click can't send a student off to pick someone else.
+// Change student: a Yes/Cancel check stops accidental clicks. The teacher's code is asked for again at the checkpoint.
 $("change").addEventListener("click", e => {
   if (e.detail === 0) return;
-  $("chInput").value = "";
-  $("chErr").textContent = "";
+  $("chText").textContent = s && s.started && !s.ended ? "Change student? This test will stop and won't be saved." : "Change student?";
   $("changePanel").hidden = false;
-  $("chInput").focus();
 });
 $("chCancel").addEventListener("click", () => {
   $("changePanel").hidden = true;
   if (s && !s.ended) box.focus(); // straight back to typing
 });
-let changing = false;
-async function confirmChange() {
-  if (changing) return;
-  const v = $("chInput").value.trim();
-  const fail = msg => { $("chErr").textContent = msg; $("chInput").value = ""; $("chInput").focus(); };
-  if (!/^\d{4}$/.test(v)) return fail("The code is 4 numbers.");
-  if (demo) { approvedCode = "demo"; $("changePanel").hidden = true; leaveForStudentPicker(); return; }
-  if (!window.fb) return fail("Can't connect. Check the internet, then try again.");
-  changing = true;
-  $("chErr").textContent = "Checking\u2026";
-  try {
-    await window.fb.unlock(v);
-    approvedCode = v;
-    await loadRoster(); // pick up any class list changes
-    $("changePanel").hidden = true;
-    leaveForStudentPicker();
-  } catch (err) {
-    console.error(err);
-    fail(err.code === "permission-denied" ? "That code is not right." : "Can't connect. Check the internet, then try again.");
-  } finally {
-    changing = false;
-  }
-}
-$("chOk").addEventListener("click", confirmChange);
-$("chInput").addEventListener("keydown", e => { if (e.key === "Enter") confirmChange(); });
+$("chOk").addEventListener("click", async () => {
+  $("changePanel").hidden = true;
+  if (!demo) { try { await loadRoster(); } catch (e) { console.error(e); } } // pick up any class list changes
+  leaveForStudentPicker();
+});
 
 // Abandon any test in progress (not saved) and go back to the class and name screen.
 function leaveForStudentPicker() {
@@ -1359,8 +1319,8 @@ $("tDemo").addEventListener("click", () => {
   realClasses = CLASSES;
   CLASSES = { "Demo": ["Demo Student"] };
   delete histories["Demo|Demo Student"]; // fresh chart every demo
-  pickedClass = null; pickedName = null; approvedCode = null;
-  openCodeScreen("unlock", "Demo: type any 4 numbers.");
+  pickedClass = null; pickedName = null;
+  openStudentPicker();
 });
 function exitDemo() {
   if (s && s.timerId) clearInterval(s.timerId);
@@ -1368,7 +1328,7 @@ function exitDemo() {
   demo = false;
   if (realClasses) CLASSES = realClasses;
   realClasses = null;
-  pickedClass = null; pickedName = null; approvedCode = null;
+  pickedClass = null; pickedName = null;
   $("changePanel").hidden = true;
   showView("teacherView");
   showTab("code");
