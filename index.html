@@ -89,6 +89,7 @@ td:last-child { font-weight:bold; font-variant-numeric:tabular-nums; }
 .bigbtn { font-size:22px; padding:14px 24px; font-weight:bold; }
 .checkq { font-size:22px; margin:8px 0 0; }
 .checkname { font-size:44px; font-weight:bold; margin:4px 0 16px; padding:12px 16px; border:4px solid var(--cur); border-radius:8px; display:inline-block; }
+.warnmsg { font-size:26px; font-weight:bold; color:var(--bad); background:var(--badbg); border:3px solid var(--bad); border-radius:8px; padding:12px 16px; display:inline-block; }
 .savebar { background:var(--warnbg); border:2px solid var(--warn); border-radius:8px; padding:4px 16px; margin:12px 0; }
 .namelist { columns:3 220px; margin:8px 0 16px; padding-left:20px; }
 #tClassTable tr.done td:first-child { border-left:6px solid var(--ok); }
@@ -268,6 +269,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
 
   <section id="resultView" hidden>
     <h2 id="rTitle">Your result</h2>
+    <p id="rWarn" class="warnmsg" hidden>⚠️ Too many mistakes. Slow down and try again.</p>
     <div class="big"><span id="rNet">0</span> words per minute</div>
     <p id="rSave" class="note"></p>
     <div id="chartWrap"><div id="chart"></div></div>
@@ -438,12 +440,22 @@ box.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
   if (k === "Backspace") { e.preventDefault(); if (s.started) backspace(); return; }
-  if (k === " ") { e.preventDefault(); if (s.started) space(); return; }
+  if (k === " ") { e.preventDefault(); if (s.started) { space(); checkAccuracy(); } return; }
   if (k.length !== 1) return;
   e.preventDefault();
   if (!s.started) start();
   typeChar(k);
+  checkAccuracy();
 });
+
+// After MIN_KEYS key presses, stop the test if accuracy has fallen below MIN_ACCURACY.
+function checkAccuracy() {
+  if (!s || s.ended) return;
+  const counted = s.keys.filter(k => k.type === "char" || (k.type === "space" && k.accepted));
+  if (counted.length < MIN_KEYS) return;
+  const acc = counted.filter(k => k.correct).length / counted.length * 100;
+  if (acc < MIN_ACCURACY) { s.tooManyMistakes = true; endTest(true); }
+}
 
 box.addEventListener("click", () => box.focus());
 // Show the amber warning whenever keys would NOT reach the test.
@@ -459,6 +471,35 @@ box.addEventListener("focus", updateAway);
 window.addEventListener("blur", updateAway);
 window.addEventListener("focus", () => setTimeout(updateAway, 0));
 document.addEventListener("visibilitychange", updateAway);
+
+// ---- Scoring ----
+// The speed score counts only correct typing: the letters of correctly typed words plus their spaces,
+// and the correct start of the word being typed when time ran out. Wrong words add nothing,
+// so mashing the keys scores about 0. (Raw speed still counts every key, for the teacher's data.)
+const SCORE_METHOD = "correct-only";
+const MIN_ACCURACY = 75;      // below this (after MIN_KEYS key presses) the test stops: "Too many mistakes"
+const MIN_KEYS = 50;
+function correctChars(words) {
+  let n = 0;
+  (words || []).forEach(w => {
+    if (w.finished) { if (w.typed === w.target) n += w.target.length + 1; }
+    else if (w.typed && w.target.startsWith(w.typed)) n += w.typed.length;
+  });
+  return n;
+}
+const correctWpm = (words, seconds) => seconds > 0 ? Math.round((correctChars(words) / 5) / (seconds / 60)) : 0;
+// Results saved before this scoring change are re-scored from their saved words. Nothing in the database changes.
+function normalizeResult(r) {
+  if (r.scoreMethod !== SCORE_METHOD && Array.isArray(r.words)) {
+    r.oldNetWpm = r.netWpm;
+    r.netWpm = correctWpm(r.words, r.seconds);
+    const counted = (r.keystrokes || []).filter(k => k.type === "char" || (k.type === "space" && k.accepted)).length;
+    if (r.tooManyMistakes === undefined) r.tooManyMistakes = counted >= MIN_KEYS && r.accuracy < MIN_ACCURACY;
+  }
+  return r;
+}
+window.normalizeResult = normalizeResult;
+const counts = r => !r.tooManyMistakes; // tests with too many mistakes don't count towards averages or pictures
 
 function computeResults(elapsed, stoppedEarly) {
   let correctChars = 0, incorrectChars = 0, extraChars = 0, missedChars = 0;
@@ -488,7 +529,6 @@ function computeResults(elapsed, stoppedEarly) {
   const minutes = elapsed / 60;
   const typedChars = correctChars + incorrectChars + extraChars + spaces;
   const gross = minutes > 0 ? (typedChars / 5) / minutes : 0;
-  const net = minutes > 0 ? Math.max(0, gross - incorrectWords / minutes) : 0;
   const uncorrected = incorrectChars + extraChars + missedChars;
 
   return {
@@ -501,8 +541,10 @@ function computeResults(elapsed, stoppedEarly) {
     stoppedEarly,
     elapsedMs: Math.round(elapsed * 1000),
     seconds: Math.round(elapsed * 100) / 100,
-    netWpm: Math.round(net),
+    netWpm: correctWpm(words, elapsed),
     grossWpm: Math.round(gross),
+    scoreMethod: SCORE_METHOD,
+    tooManyMistakes: !!s.tooManyMistakes,
     accuracy: counted.length ? Math.round((correctKeys / counted.length) * 1000) / 10 : 0,
     correctWords, incorrectWords,
     correctChars, incorrectChars, extraChars, missedChars,
@@ -565,8 +607,9 @@ function showStats(i) {
   showSaveState(r);
   $("rTitle").textContent = "Test " + (i + 1) + " result";
   $("rNet").textContent = r.netWpm;
+  $("rWarn").hidden = !r.tooManyMistakes;
   const rows = [
-    ["Speed after mistakes (net)", r.netWpm + " wpm"],
+    ["Speed (correct words only)", r.netWpm + " wpm"],
     ["Raw speed (gross)", r.grossWpm + " wpm"],
     ["Accuracy", r.accuracy + "%"],
     ["Correct words", r.correctWords],
@@ -603,7 +646,7 @@ const PROOF_TESTS = 3;
 // A test counts towards the results picture if it lasted at least 30 seconds (finished or stopped).
 // In the teacher's demo every test counts, so it's quick to show.
 const MIN_SECONDS = 30;
-const fullTests = () => demo ? history.slice() : history.filter(r => r.seconds >= MIN_SECONDS);
+const fullTests = () => demo ? history.filter(counts) : history.filter(r => counts(r) && r.seconds >= MIN_SECONDS);
 function renderProof() {
   const n = fullTests().length;
   $("proof").innerHTML = n >= PROOF_TESTS
@@ -973,6 +1016,7 @@ $("exportGo").addEventListener("click", async () => {
         "Class": r.className, "Student": r.studentName, "Test number": r._n, "Date": t.date, "Time": t.time,
         "Test length (s)": r.testLength, "Time typed (s)": r.seconds, "Stopped early": r.stoppedEarly ? "Yes" : "No",
         "Net wpm": r.netWpm, "Gross wpm": r.grossWpm, "Accuracy %": r.accuracy,
+        "Too many mistakes": r.tooManyMistakes ? "Yes" : "No", "Old-formula net wpm": r.oldNetWpm ?? "",
         "Correct words": r.correctWords, "Wrong words": r.incorrectWords,
         "Correct letters": r.correctChars, "Wrong letters": r.incorrectChars, "Extra letters": r.extraChars, "Missed letters": r.missedChars,
         "Mistakes fixed": r.correctedErrors, "Mistakes not fixed": r.uncorrectedErrors,
@@ -982,10 +1026,11 @@ $("exportGo").addEventListener("click", async () => {
 
     const summary = [];
     sortClasses(Object.keys(CLASSES)).forEach(cls => CLASSES[cls].forEach(name => {
-      const res = results.filter(r => r.className === cls && r.studentName === name);
+      const all = results.filter(r => r.className === cls && r.studentName === name);
+      const res = all.filter(counts); // tests with too many mistakes are left out of the averages
       const w = res.map(r => r.netWpm);
       summary.push({
-        "Class": cls, "Student": name, "Added by teacher": isAdded(cls, name) ? "Yes" : "No", "Tests": res.length,
+        "Class": cls, "Student": name, "Added by teacher": isAdded(cls, name) ? "Yes" : "No", "Tests": all.length, "Tests with too many mistakes": all.length - res.length,
         "Average net wpm": res.length ? Math.round(w.reduce((a, b) => a + b, 0) / res.length) : "",
         "Best net wpm": res.length ? Math.max(...w) : "", "Latest net wpm": res.length ? w[w.length - 1] : "",
         "First test": res.length ? local(res[0].finishedAt).date : "", "Last test": res.length ? local(res[res.length - 1].finishedAt).date : ""
@@ -1272,8 +1317,9 @@ function renderClassDetail() {
     else if (res.length) { status = "\u2713 Done"; cls = "st-done"; row = "done"; }
     else { status = "Not done yet"; cls = "st-none"; row = "notyet"; }
     const latest = res[res.length - 1];
-    const best = res.length ? Math.max(...res.map(r => r.netWpm)) : null;
-    const avg = res.length ? Math.round(res.reduce((a, r) => a + r.netWpm, 0) / res.length) : null;
+    const ok = res.filter(counts);
+    const best = ok.length ? Math.max(...ok.map(r => r.netWpm)) : null;
+    const avg = ok.length ? Math.round(ok.reduce((a, r) => a + r.netWpm, 0) / ok.length) : null;
     return { name, status, cls, row, total: res.length, avg, best };
   });
   const counts = { now: rows.filter(r => r.row === "now").length, done: rows.filter(r => r.row === "done").length };
@@ -1297,7 +1343,7 @@ $("tClassDetail").addEventListener("click", e => {
 
 let tLessonDay = null, tPicMsg = "";
 // Tests from one lesson (one day) that count towards the results picture.
-const picTests = (res, day) => res.filter(r => localDay(toMs(r.finishedAt)) === day && r.seconds >= MIN_SECONDS);
+const picTests = (res, day) => res.filter(r => counts(r) && localDay(toMs(r.finishedAt)) === day && r.seconds >= MIN_SECONDS);
 function renderStudentDetail() {
   if (!tStudent) { $("tStudentDetail").innerHTML = ""; return; }
   const res = classData.results.filter(r => r.studentName === tStudent).sort((a, b) => toMs(a.finishedAt) - toMs(b.finishedAt));
@@ -1319,7 +1365,7 @@ function renderStudentDetail() {
       Math.max(2, Math.round(r.netWpm / top * 140)) + 'px"></div><div class="tlabel">Test ' + (i + 1) + "</div></div>").join("") + "</div></div>" +
     '<div style="overflow-x:auto"><table><thead><tr><td>Test</td><td>Date and time</td><td>Net wpm</td><td>Gross wpm</td><td>Accuracy</td><td>Time typed</td></tr></thead><tbody>' +
     res.map((r, i) => "<tr><td>" + (i + 1) + "</td><td>" + shortDate(toMs(r.finishedAt)) + "</td><td>" + r.netWpm + "</td><td>" + r.grossWpm +
-      "</td><td>" + r.accuracy + "%</td><td>" + fmtLong(r.seconds) + (r.stoppedEarly ? " (stopped)" : "") + "</td></tr>").join("") +
+      "</td><td>" + r.accuracy + "%</td><td>" + fmtLong(r.seconds) + (r.tooManyMistakes ? ' <b class="err">(too many mistakes)</b>' : r.stoppedEarly ? " (stopped)" : "") + "</td></tr>").join("") +
     "</tbody></table></div>";
   const w = $("sChartWrap"); w.scrollLeft = w.scrollWidth;
 }
@@ -1528,7 +1574,7 @@ window.fb = {
     const data = { results: [], sessions: [] };
     const opts = { serverTimestamps: "estimate" };
     const a = onSnapshot(query(collection(db, "results"), where("className", "==", className)),
-      s => { data.results = s.docs.map(d => d.data(opts)); cb(data); }, e => console.error(e));
+      s => { data.results = s.docs.map(d => window.normalizeResult(d.data(opts))); cb(data); }, e => console.error(e));
     const b = onSnapshot(query(collection(db, "sessions"), where("className", "==", className)),
       s => { data.sessions = s.docs.map(d => d.data(opts)); cb(data); }, e => console.error(e));
     return () => { a(); b(); };
@@ -1549,11 +1595,11 @@ window.fb = {
     return count;
   },
   async getAllResults() {
-    return (await withTimeout(getDocs(collection(db, "results")))).docs.map(d => d.data());
+    return (await withTimeout(getDocs(collection(db, "results")))).docs.map(d => window.normalizeResult(d.data()));
   },
   watchResults(cb) {
     return onSnapshot(query(collection(db, "results"), orderBy("savedAt", "desc"), limit(20)),
-      s => cb(s.docs.map(d => d.data({ serverTimestamps: "estimate" }))), e => { console.error(e); cb([]); });
+      s => cb(s.docs.map(d => window.normalizeResult(d.data({ serverTimestamps: "estimate" })))), e => { console.error(e); cb([]); });
   }
 };
 </script>
