@@ -271,6 +271,7 @@ pre { max-height:300px; overflow:auto; font-size:12px; border:1px solid var(--li
     <h2 id="rTitle">Your result</h2>
     <p id="rWarn" class="warnmsg" hidden>⚠️ Too many mistakes. Slow down and try again.</p>
     <div class="big"><span id="rNet">0</span> words per minute</div>
+    <p id="rShort" class="progress" hidden>Too short to count. A test must be at least 30 seconds.</p>
     <p id="rSave" class="note"></p>
     <div id="chartWrap"><div id="chart"></div></div>
     <div id="proof" class="proof"></div>
@@ -496,10 +497,12 @@ function normalizeResult(r) {
     const counted = (r.keystrokes || []).filter(k => k.type === "char" || (k.type === "space" && k.accepted)).length;
     if (r.tooManyMistakes === undefined) r.tooManyMistakes = counted >= MIN_KEYS && r.accuracy < MIN_ACCURACY;
   }
+  if (r.tooManyMistakes) r.netWpm = 0;
   return r;
 }
 window.normalizeResult = normalizeResult;
 const counts = r => !r.tooManyMistakes; // tests with too many mistakes don't count towards averages or pictures
+const countsOnBoard = r => counts(r) && r.seconds >= 30; // the Classes page and export also need 30 seconds or more
 
 function computeResults(elapsed, stoppedEarly) {
   let correctChars = 0, incorrectChars = 0, extraChars = 0, missedChars = 0;
@@ -541,7 +544,7 @@ function computeResults(elapsed, stoppedEarly) {
     stoppedEarly,
     elapsedMs: Math.round(elapsed * 1000),
     seconds: Math.round(elapsed * 100) / 100,
-    netWpm: correctWpm(words, elapsed),
+    netWpm: s.tooManyMistakes ? 0 : correctWpm(words, elapsed), // stopped for too many mistakes: no score
     grossWpm: Math.round(gross),
     scoreMethod: SCORE_METHOD,
     tooManyMistakes: !!s.tooManyMistakes,
@@ -608,6 +611,7 @@ function showStats(i) {
   $("rTitle").textContent = "Test " + (i + 1) + " result";
   $("rNet").textContent = r.netWpm;
   $("rWarn").hidden = !r.tooManyMistakes;
+  $("rShort").hidden = demo || r.tooManyMistakes || r.seconds >= 30;
   const rows = [
     ["Speed (correct words only)", r.netWpm + " wpm"],
     ["Raw speed (gross)", r.grossWpm + " wpm"],
@@ -1027,10 +1031,10 @@ $("exportGo").addEventListener("click", async () => {
     const summary = [];
     sortClasses(Object.keys(CLASSES)).forEach(cls => CLASSES[cls].forEach(name => {
       const all = results.filter(r => r.className === cls && r.studentName === name);
-      const res = all.filter(counts); // tests with too many mistakes are left out of the averages
+      const res = all.filter(countsOnBoard); // too many mistakes, or under 30 seconds: left out of the averages
       const w = res.map(r => r.netWpm);
       summary.push({
-        "Class": cls, "Student": name, "Added by teacher": isAdded(cls, name) ? "Yes" : "No", "Tests": all.length, "Tests with too many mistakes": all.length - res.length,
+        "Class": cls, "Student": name, "Added by teacher": isAdded(cls, name) ? "Yes" : "No", "Tests": all.length, "Tests not counted (too many mistakes or under 30 s)": all.length - res.length,
         "Average net wpm": res.length ? Math.round(w.reduce((a, b) => a + b, 0) / res.length) : "",
         "Best net wpm": res.length ? Math.max(...w) : "", "Latest net wpm": res.length ? w[w.length - 1] : "",
         "First test": res.length ? local(res[0].finishedAt).date : "", "Last test": res.length ? local(res[res.length - 1].finishedAt).date : ""
@@ -1317,7 +1321,7 @@ function renderClassDetail() {
     else if (res.length) { status = "\u2713 Done"; cls = "st-done"; row = "done"; }
     else { status = "Not done yet"; cls = "st-none"; row = "notyet"; }
     const latest = res[res.length - 1];
-    const ok = res.filter(counts);
+    const ok = res.filter(countsOnBoard);
     const best = ok.length ? Math.max(...ok.map(r => r.netWpm)) : null;
     const avg = ok.length ? Math.round(ok.reduce((a, r) => a + r.netWpm, 0) / ok.length) : null;
     return { name, status, cls, row, total: res.length, avg, best };
@@ -1365,7 +1369,7 @@ function renderStudentDetail() {
       Math.max(2, Math.round(r.netWpm / top * 140)) + 'px"></div><div class="tlabel">Test ' + (i + 1) + "</div></div>").join("") + "</div></div>" +
     '<div style="overflow-x:auto"><table><thead><tr><td>Test</td><td>Date and time</td><td>Net wpm</td><td>Gross wpm</td><td>Accuracy</td><td>Time typed</td></tr></thead><tbody>' +
     res.map((r, i) => "<tr><td>" + (i + 1) + "</td><td>" + shortDate(toMs(r.finishedAt)) + "</td><td>" + r.netWpm + "</td><td>" + r.grossWpm +
-      "</td><td>" + r.accuracy + "%</td><td>" + fmtLong(r.seconds) + (r.tooManyMistakes ? ' <b class="err">(too many mistakes)</b>' : r.stoppedEarly ? " (stopped)" : "") + "</td></tr>").join("") +
+      "</td><td>" + r.accuracy + "%</td><td>" + fmtLong(r.seconds) + (r.tooManyMistakes ? ' <b class="err">(too many mistakes)</b>' : r.seconds < 30 ? " (too short to count)" : r.stoppedEarly ? " (stopped)" : "") + "</td></tr>").join("") +
     "</tbody></table></div>";
   const w = $("sChartWrap"); w.scrollLeft = w.scrollWidth;
 }
